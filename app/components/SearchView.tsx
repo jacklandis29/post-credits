@@ -73,9 +73,7 @@ export function SearchView({
     <div className="page content-wrap search-page">
       <div className="search-stage">
         <div className="search-title-block">
-          <span className="search-eyebrow">Discover</span>
-          <h1>Find your next film—or a friend.</h1>
-          <p>Search the whole After Credits community from one place.</p>
+          <h1>Find your next film.</h1>
         </div>
 
         <section className="unified-search" aria-label="Search movies and people">
@@ -83,6 +81,7 @@ export function SearchView({
             <SearchIcon />
             <input
               autoFocus
+              data-modal-autofocus
               value={query}
               onChange={(event) => {
                 setActiveResult(-1);
@@ -111,7 +110,11 @@ export function SearchView({
             {ready && resultCount > 0 ? <span className="search-key-hint">↑↓ to move · enter to open</span> : null}
           </div>
 
-          <div className="unified-search-results" id="unified-search-results">
+          <div
+            className="unified-search-results"
+            id="unified-search-results"
+            aria-busy={searching}
+          >
             {!ready ? (
               <div className="search-prompt">
                 <span className="search-prompt-icon"><SearchIcon /></span>
@@ -185,6 +188,14 @@ export function SearchView({
                   </div>
                 ) : null}
 
+                {searching && resultCount === 0 ? (
+                  <div className="unified-search-loading" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                ) : null}
+
                 {!searching && resultCount === 0 ? (
                   <div className="unified-search-empty">
                     <span>No results for “{query.trim()}”</span>
@@ -195,6 +206,38 @@ export function SearchView({
             )}
           </div>
         </section>
+      </div>
+    </div>
+  );
+}
+
+export function QuickSearchModal({
+  onClose,
+  onViewAll,
+  ...searchProps
+}: Parameters<typeof SearchView>[0] & {
+  onClose: () => void;
+  onViewAll: () => void;
+}) {
+  return (
+    <div
+      className="quick-search-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Quick search"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="quick-search-modal">
+        <div className="quick-search-heading">
+          <div><span>Quick search</span><strong>Find a film or person</strong></div>
+          <button className="sheet-close inline" type="button" onClick={onClose} aria-label="Close quick search">×</button>
+        </div>
+        <SearchView {...searchProps} />
+        <button className="quick-search-view-all" type="button" onClick={onViewAll}>
+          Browse the full search page <span aria-hidden="true">→</span>
+        </button>
       </div>
     </div>
   );

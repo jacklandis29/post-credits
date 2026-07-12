@@ -2,86 +2,103 @@
 
 /* eslint-disable @next/next/no-img-element -- TMDB paths are cached metadata and rendered with designed fallbacks. */
 
-import { formatScore } from "@/lib/ranking";
-import { movieById } from "@/lib/seed";
-import type { DiaryEntry, Movie } from "@/lib/types";
+import { movieById, movies } from "@/lib/seed";
+import { movieSimilarity } from "@/lib/similarity";
+import type { DiaryEntry, Movie, WatchlistItem } from "@/lib/types";
 import { filmStyle, prettyDate, type CanonRow } from "@/lib/ui";
-import { PosterArt, VerdictMark } from "./media";
+import { PosterArt } from "./media";
+
+function FilmRail({
+  movies: items,
+  label,
+  onFilm,
+}: {
+  movies: Movie[];
+  label: (movie: Movie) => string;
+  onFilm: (movie: Movie) => void;
+}) {
+  return (
+    <div className="poster-rail">
+      {items.slice(0, 6).map((item) => (
+        <button className="poster-card" key={item.id} onClick={() => onFilm(item)}>
+          <PosterArt movie={item} />
+          <span className="poster-card-copy">
+            <strong>{item.title}</strong>
+            <small>{label(item)}</small>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export function HomeView({
-  latest,
-  movie,
-  canonRow,
   diary,
+  canon,
+  watchlist,
   stats,
   unfinishedMovie,
   onResume,
   onLog,
   onFilm,
   onViewDiary,
+  onViewWatchlist,
 }: {
-  latest?: DiaryEntry;
-  movie: Movie;
-  canonRow?: CanonRow;
   diary: DiaryEntry[];
+  canon: CanonRow[];
+  watchlist: WatchlistItem[];
   stats: { films: number; minutes: number; rewatches: number };
   unfinishedMovie?: Movie;
   onResume: () => void;
   onLog: () => void;
   onFilm: (movie: Movie) => void;
   onViewDiary: () => void;
+  onViewWatchlist: () => void;
 }) {
-  if (!latest) {
-    return (
-      <div className="home-empty content-wrap">
-        <div className="home-empty-copy">
-          <h1>Your diary starts with one film.</h1>
-          <p>
-            Log the last thing you watched. A verdict and a few quick
-            comparisons will start your all-time ranking — everything after
-            that builds itself.
-          </p>
-          <button className="primary-action" onClick={onLog}>Log your first film</button>
-        </div>
-      </div>
-    );
-  }
+  const seen = new Set(diary.map((entry) => entry.movieId));
+  const liked = canon.filter((row) => row.ranked.verdict === "liked");
+  const candidates = movies
+    .filter((item) => !seen.has(item.id))
+    .map((item) => ({
+      movie: item,
+      score: liked.reduce(
+        (total, row) => total + movieSimilarity(item, row.movie) * Math.max(1, 7 - row.withinBucketRank),
+        0,
+      ),
+    }))
+    .sort((left, right) => right.score - left.score || right.movie.year - left.movie.year)
+    .map(({ movie }) => movie);
+
+  const recommendations = candidates.length ? candidates : movies.filter((item) => !seen.has(item.id));
+  const hero = recommendations[0] ?? movies[0];
+  const tasteAnchor = liked[0]?.movie;
+  const watchlistMovies = watchlist.map((item) => movieById(item.movieId));
+  const recent = diary.slice(0, 6).map((entry) => movieById(entry.movieId));
 
   return (
-    <>
-      <section className="home-hero" style={filmStyle(movie)}>
-        {movie.backdrop ? <img className="hero-backdrop" src={movie.backdrop} alt="" /> : null}
-        <div className="hero-shade" />
-        <div className="hero-content content-wrap">
-          <p className="watch-date">{prettyDate(latest.watchedOn, { month: "long", day: "numeric", year: "numeric" })}</p>
-          <h1>{movie.title}</h1>
+    <div className="discovery-home">
+      <section className="discovery-hero" style={filmStyle(hero)}>
+        {hero.backdrop ? <img className="discovery-hero-art" src={hero.backdrop} alt="" /> : null}
+        <div className="discovery-hero-shade" />
+        <div className="discovery-hero-copy content-wrap">
+          <p className="discovery-kicker">{tasteAnchor ? "Picked for your taste" : "A place to start"}</p>
+          <h1>{hero.title}</h1>
           <div className="hero-meta">
-            <span>{movie.year}</span><span>{movie.director}</span>{movie.runtime ? <span>{movie.runtime} min</span> : null}
+            <span>{hero.year}</span><span>{hero.director}</span>{hero.runtime ? <span>{hero.runtime} min</span> : null}
           </div>
-          {latest.note ? <blockquote>&ldquo;{latest.note}&rdquo;</blockquote> : null}
-          {canonRow ? (
-            <div className="hero-outcome">
-              <VerdictMark verdict={canonRow.ranked.verdict} />
-              <div className="hero-rank"><span>Rank</span><strong>#{canonRow.rank}</strong></div>
-              {canonRow.score !== null ? (
-                <div
-                  className="hero-score"
-                  title="Calculated from verdict and canon position"
-                  aria-label={`Relative score ${formatScore(canonRow.score)}, calculated from verdict and canon position`}
-                >
-                  <span>Score</span><strong>{formatScore(canonRow.score)}</strong>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+          <p className="discovery-reason">
+            {tasteAnchor
+              ? `Because ${tasteAnchor.title} sits near the top of your canon.`
+              : "Log and rank a few films and Post Credits will learn what deserves your next evening."}
+          </p>
           <div className="hero-actions">
-            <button className="primary-action" onClick={onLog}>Log a film</button>
-            <button className="text-action" onClick={() => onFilm(movie)}>View entry</button>
+            <button className="primary-action" onClick={() => onFilm(hero)}>View film</button>
+            <button className="text-action" onClick={onLog}>Log a film</button>
           </div>
         </div>
       </section>
 
-      <div className="content-wrap home-body">
+      <div className="content-wrap discovery-body">
         {unfinishedMovie ? (
           <button className="unfinished-card" onClick={onResume}>
             <span className="unfinished-pulse" aria-hidden="true" />
@@ -90,26 +107,47 @@ export function HomeView({
           </button>
         ) : null}
 
+        <section className="discovery-intro">
+          <div>
+            <p className="discovery-kicker">For you</p>
+            <h2>Find your next film.</h2>
+          </div>
+          <p>Your canon becomes the signal. The more honestly you rank, the sharper these picks become.</p>
+        </section>
+
         <section className="section-block">
           <div className="section-heading">
-            <h2>Recent</h2>
-            <button className="text-action" onClick={onViewDiary}>All entries</button>
+            <div><p className="rail-kicker">Based on your canon</p><h2>{tasteAnchor ? `Because you loved ${tasteAnchor.title}` : "Worth discovering"}</h2></div>
           </div>
-          <div className="poster-rail">
-            {diary.slice(0, 6).map((entry) => {
-              const item = movieById(entry.movieId);
-              return (
-                <button className="poster-card" key={entry.id} onClick={() => onFilm(item)}>
-                  <PosterArt movie={item} />
-                  <span className="poster-card-copy">
-                    <strong>{item.title}</strong>
-                    <small>{prettyDate(entry.watchedOn, { month: "short", day: "numeric" })}{entry.isRewatch ? " · Rewatch" : ""}</small>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          <FilmRail movies={recommendations.slice(1, 7)} label={(item) => `${item.year} · ${item.genres[0] ?? "Film"}`} onFilm={onFilm} />
         </section>
+
+        {watchlistMovies.length ? (
+          <section className="section-block">
+            <div className="section-heading">
+              <div><p className="rail-kicker">Already on your radar</p><h2>From your watchlist</h2></div>
+              <button className="text-action" onClick={onViewWatchlist}>View all</button>
+            </div>
+            <FilmRail movies={watchlistMovies} label={(item) => `${item.runtime ? `${item.runtime} min · ` : ""}${item.genres[0] ?? item.year}`} onFilm={onFilm} />
+          </section>
+        ) : null}
+
+        {recent.length ? (
+          <section className="section-block home-recent">
+            <div className="section-heading">
+              <div><p className="rail-kicker">Your record</p><h2>Recently watched</h2></div>
+              <button className="text-action" onClick={onViewDiary}>All entries</button>
+            </div>
+            <FilmRail
+              movies={recent}
+              label={(item) => {
+                const entry = diary.find((row) => row.movieId === item.id);
+                return entry ? prettyDate(entry.watchedOn, { month: "short", day: "numeric" }) : String(item.year);
+              }}
+              onFilm={onFilm}
+            />
+          </section>
+        ) : null}
 
         <section className="quiet-stats" aria-label="Watching statistics">
           <div>
@@ -119,6 +157,6 @@ export function HomeView({
           </div>
         </section>
       </div>
-    </>
+    </div>
   );
 }

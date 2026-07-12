@@ -20,7 +20,12 @@ type MovieDetail = {
   genres?: Array<{ id: number; name: string }>;
   credits?: {
     crew?: Array<{ job?: string; name?: string }>;
-    cast?: Array<{ name?: string; order?: number }>;
+    cast?: Array<{
+      name?: string;
+      character?: string;
+      order?: number;
+      profile_path?: string | null;
+    }>;
   };
   keywords?: { keywords?: Array<{ id?: number; name?: string }> };
   videos?: {
@@ -118,6 +123,17 @@ export async function GET(
         .sort((left, right) => (left.order ?? 999) - (right.order ?? 999))
         .slice(0, 12)
         .map((person) => person.name!),
+      credits: (detail.credits?.cast ?? [])
+        .filter((person) => person.name)
+        .sort((left, right) => (left.order ?? 999) - (right.order ?? 999))
+        .slice(0, 14)
+        .map((person) => ({
+          name: person.name!,
+          character: person.character?.trim() || null,
+          profile: person.profile_path
+            ? `${IMAGE_ORIGIN}/w185${person.profile_path}`
+            : null,
+        })),
       keywords: (detail.keywords?.keywords ?? [])
         .flatMap((keyword) => keyword.name ? [keyword.name] : [])
         .slice(0, 40),

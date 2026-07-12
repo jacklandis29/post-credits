@@ -30,23 +30,23 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     metadataBase,
     title: {
-      default: "After Credits",
-      template: "%s · After Credits",
+      default: "Post Credits",
+      template: "%s · Post Credits",
     },
     description:
       "Log films, write notes, and maintain a comparison-based personal ranking.",
-    applicationName: "After Credits",
+    applicationName: "Post Credits",
     category: "entertainment",
     keywords: ["film diary", "movie ranking", "personal canon", "cinema"],
     openGraph: {
-      title: "After Credits",
+      title: "Post Credits",
       description: "Film diary with comparison-based ranking.",
       type: "website",
-      siteName: "After Credits",
+      siteName: "Post Credits",
     },
     twitter: {
       card: "summary_large_image",
-      title: "After Credits",
+      title: "Post Credits",
       description: "Film diary with comparison-based ranking.",
     },
   };
@@ -59,6 +59,15 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`dark ${geistSans.variable} ${fraunces.variable}`}>
+      <head>
+        <link rel="preconnect" href="https://image.tmdb.org" />
+        <link rel="dns-prefetch" href="https://image.tmdb.org" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{if(localStorage.getItem("after-credits-sidebar-collapsed")==="true")document.documentElement.classList.add("sidebar-collapsed-initial")}catch{}`,
+          }}
+        />
+      </head>
       <body className="antialiased">
         {children}
       </body>

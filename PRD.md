@@ -1,4 +1,4 @@
-# After Credits — Product Requirements Document
+# Post Credits — Product Requirements Document
 
 **Status:** Draft for product alignment  
 **Version:** 0.3  
@@ -10,7 +10,7 @@
 
 ## 1. Product summary
 
-After Credits is a personal film diary built around one opinion that matters: yours.
+Post Credits is a personal film diary built around one opinion that matters: yours.
 
 It lets people log films, write private or public notes, and maintain a living all-time ranking without choosing stars or inventing scores. Each new film starts with a coarse verdict—**liked it**, **fine**, or **didn't like it**—then enters the user's ranked canon through a short series of head-to-head choices. A 0–10 score is derived from the verdict and position within that verdict band rather than assigned directly.
 
@@ -18,7 +18,7 @@ The product should feel more like opening a beautifully kept film journal than e
 
 ### Project intent
 
-After Credits is first a product we want to use and a portfolio-quality demonstration of product judgment, interaction design, and full-stack execution. It should be engineered as a real product—secure, resilient, accessible, and capable of supporting outside users—without assuming that growth, monetization, or company formation is the goal. It succeeds if it becomes an excellent personal film diary, even if its long-term active user count is one.
+Post Credits is first a product we want to use and a portfolio-quality demonstration of product judgment, interaction design, and full-stack execution. It should be engineered as a real product—secure, resilient, accessible, and capable of supporting outside users—without assuming that growth, monetization, or company formation is the goal. It succeeds if it becomes an excellent personal film diary, even if its long-term active user count is one.
 
 ### Product promise
 
@@ -26,7 +26,7 @@ After Credits is first a product we want to use and a portfolio-quality demonstr
 
 ### Positioning
 
-After Credits is the anti-Letterboxd in behavior, not just appearance:
+Post Credits is the anti-Letterboxd in behavior, not just appearance:
 
 - Personal taste is primary; consensus is never placed beside it.
 - Ranking replaces star inflation and rating anxiety.
@@ -47,7 +47,7 @@ People face four recurring problems:
 3. **Consensus crowds out reflection.** Community averages, reviews, and popularity signals shape an opinion before a user has recorded their own.
 4. **The diary feels transactional.** Logging is optimized, but looking back rarely feels personal, cinematic, or worth returning to.
 
-After Credits turns logging into an act of curation. Every entry contributes to a living portrait of the user's taste.
+Post Credits turns logging into an act of curation. Every entry contributes to a living portrait of the user's taste.
 
 ---
 
@@ -72,7 +72,7 @@ After Credits turns logging into an act of curation. Every entry contributes to 
 - Manual or custom movie records. v1 supports TMDB-backed feature films only; a feature film absent from TMDB cannot be logged until manual entries are added post-v1.
 - Following feed, likes, comments, notifications, or direct messages.
 - Community averages, aggregate ratings, trending films, or popularity charts.
-- Recommendation engine or “what should I watch?” feature.
+- Full machine-learning recommendation infrastructure. v1 discovery uses transparent, deterministic signals from the user's canon and TMDB metadata.
 - Custom lists beyond the single ranked canon.
 - Watch-provider availability, ticketing, or streaming links.
 - Data import from Letterboxd or other services. This is a strong post-v1 onboarding feature.
@@ -126,7 +126,7 @@ A film lover who watches regularly and wants a meaningful private record, but fi
 
 ### Primary navigation
 
-1. **Home** — latest watch hero, recent diary, quiet stats.
+1. **Home** — film discovery, personalized recommendations, watchlist resurfacing, and recent activity.
 2. **Diary** — all watch entries grouped by month.
 3. **Canon** — the user's complete ranked list.
 4. **Watchlist** — films the user wants to watch.
@@ -408,7 +408,7 @@ Minimum cached fields:
 - Add/remove actions are available from movie search, movie detail, and the Watchlist itself.
 - A completed log removes the matching Watchlist item transactionally.
 - Watchlist order is most recently added by default; v1 has no manual ordering or public sharing.
-- Watchlist state does not influence ranking, comparison selection, scores, or recommendations.
+- Watchlist state does not influence ranking, comparison selection, or scores. It may influence discovery and resurfacing on Home.
 
 ### 9.5 Personal film page
 
@@ -423,13 +423,16 @@ No TMDB user rating, vote count, popularity, external review, or friend opinion 
 
 ### 9.6 Home
 
-- Latest watch as a full-bleed backdrop title card fading into true black.
-- Immediate **Log a film** action.
-- Recent diary strip.
+- Home answers **What should I watch next?** before recapping what the user already watched.
+- Signed-out users receive mood-led browsing, recently watched films from public activity, and a clear explanation of how a personal canon improves recommendations. Community scores, rankings, and engagement counts never appear.
+- Signed-in users receive one prominent recommendation and focused discovery rails derived from their highest-ranked liked films, TMDB similarity metadata, and watchlist.
+- Every recommendation should explain its strongest signal in plain language, such as **Because you loved Arrival**.
+- Watchlist resurfacing and a compact recent diary strip follow the discovery content.
+- Immediate **Log a film** action remains available without making logging the page's only job.
 - Quiet footer stats: films this year, minutes watched, and rewatch count.
 - Minutes watched is the sum of cached runtimes for completed watch entries; entries with unknown runtime and DNFs are excluded rather than estimated.
-- If an entry or ranking session is unfinished, show one quiet **Finish ranking** card before recent diary content.
-- Empty state uses product education, not fake activity.
+- If an entry or ranking session is unfinished, show one quiet **Finish ranking** card before discovery rails.
+- A new signed-in user's empty state offers useful broad discovery while explaining that recommendations sharpen as their canon grows.
 
 ### 9.7 Privacy and social access
 

@@ -54,3 +54,12 @@ export function SearchIcon() {
     </svg>
   );
 }
+
+export function LockIcon() {
+  return (
+    <svg className="lock-icon" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+      <rect x="4" y="8" width="10" height="7" rx="2" />
+      <path d="M6.5 8V6.2a2.5 2.5 0 0 1 5 0V8" />
+    </svg>
+  );
+}

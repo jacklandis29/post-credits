@@ -40,7 +40,10 @@ type GatePhase =
   | { name: "error"; message: string };
 
 type SupabaseGateProps = {
-  children: (connection: ConnectedSupabase | null) => ReactNode;
+  children: (
+    connection: ConnectedSupabase | null,
+    requestSignIn?: () => void,
+  ) => ReactNode;
   signedOut?: (
     openSignIn: () => void,
     client: SupabaseClient,
@@ -141,8 +144,8 @@ function AuthCard({
           {onBack ? <button className="supabase-auth-back" type="button" onClick={onBack}>Close</button> : null}
         </div>
         <p className="supabase-auth-kicker">Your private film journal</p>
-        <h1 id="sign-in-title">Sign in</h1>
-        <p className="supabase-auth-intro">No password to remember. We’ll email you a secure sign-in link, or you can continue with Google.</p>
+        <h1 id="sign-in-title">Sign in or create account</h1>
+        <p className="supabase-auth-intro">One secure email link does both — if you&rsquo;re new, your account is created automatically. Or continue with Google.</p>
         <form className="supabase-auth-form" onSubmit={sendMagicLink}>
           <label>
             <span>Email</span>
@@ -324,6 +327,7 @@ function SupabaseStatus({
 function ConfiguredSupabaseGate({ children, signedOut }: SupabaseGateProps) {
   const client = useMemo(() => getSupabaseBrowserClient(), []);
   const [phase, setPhase] = useState<GatePhase>({ name: "loading" });
+  const [showLoading, setShowLoading] = useState(false);
   const [showSignIn, setShowSignIn] = useState(false);
   const [localMode, setLocalMode] = useState(false);
   const generation = useRef(0);
@@ -367,6 +371,12 @@ function ConfiguredSupabaseGate({ children, signedOut }: SupabaseGateProps) {
   );
 
   useEffect(() => {
+    if (phase.name !== "loading") return;
+    const timer = window.setTimeout(() => setShowLoading(true), 400);
+    return () => window.clearTimeout(timer);
+  }, [phase.name]);
+
+  useEffect(() => {
     let disposed = false;
     let resolvedUserId: string | null | undefined;
 
@@ -406,9 +416,22 @@ function ConfiguredSupabaseGate({ children, signedOut }: SupabaseGateProps) {
     };
   }, [client, loadAccount]);
 
-  if (localMode) return <>{children(null)}</>;
+  if (localMode) {
+    return (
+      <>
+        {children(null, () => {
+          setLocalMode(false);
+          setShowSignIn(true);
+        })}
+      </>
+    );
+  }
   if (phase.name === "loading") {
-    return <SupabaseStatus title="Loading…" />;
+    return showLoading ? (
+      <SupabaseStatus title="Loading…" />
+    ) : (
+      <main className="supabase-boot" role="status" aria-label="Loading Post Credits" />
+    );
   }
   if (phase.name === "signed_out") {
     if (!showSignIn && signedOut) {
@@ -444,7 +467,7 @@ function ConfiguredSupabaseGate({ children, signedOut }: SupabaseGateProps) {
     );
   }
   if (phase.name === "error") {
-    return <SupabaseStatus title="Could not load After Credits" detail={phase.message} />;
+    return <SupabaseStatus title="Could not load Post Credits" detail={phase.message} />;
   }
   return <>{children(phase.connection)}</>;
 }

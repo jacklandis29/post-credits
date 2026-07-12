@@ -20,6 +20,11 @@ export type Movie = {
   director: string;
   genres: string[];
   cast?: string[];
+  credits?: Array<{
+    name: string;
+    character: string | null;
+    profile: string | null;
+  }>;
   keywords?: string[];
   originalLanguage?: string | null;
   productionCountries?: string[];

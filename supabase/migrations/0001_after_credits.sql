@@ -1,4 +1,4 @@
--- After Credits v1 schema
+-- Post Credits v1 schema
 -- Target: Supabase Postgres 15+
 
 begin;

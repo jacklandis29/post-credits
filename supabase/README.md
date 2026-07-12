@@ -1,4 +1,4 @@
-# After Credits database
+# Post Credits database
 
 The initial migration in `migrations/0001_after_credits.sql` implements the v1
 Supabase data model, transactional ranking primitives, derived canon scores, and

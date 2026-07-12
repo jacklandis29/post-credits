@@ -117,31 +117,34 @@ export function ProfileSheet({
 
   return (
     <div className="profile-overlay" role="dialog" aria-modal="true" aria-label="Profile and settings">
-      <aside className="profile-sheet">
+      <section className="profile-sheet">
         <div className="profile-sheet-heading">
           <div className="profile-avatar">{(displayName || profile.username).slice(0, 1).toUpperCase()}</div>
-          <div><p>Profile &amp; settings</p><h1>@{profile.username}</h1></div>
+          <div><p>Edit profile</p><h1>@{profile.username}</h1></div>
           <button className="sheet-close inline" onClick={onClose} aria-label="Close profile settings">×</button>
         </div>
         <form className="profile-form" onSubmit={submit}>
-          <label><span>Display name</span><input value={displayName} maxLength={80} onChange={(event) => setDisplayName(event.target.value)} required /></label>
-          <label><span>Bio <small>{bio.length}/300</small></span><textarea value={bio} maxLength={300} onChange={(event) => setBio(event.target.value)} placeholder="A line about your taste in film" /></label>
-          <label className="setting-toggle"><span><strong>Public profile</strong><small>{profile.publicAccessApproved ? "Let people visit your diary and ranking." : "Public profiles are invite-only during the private alpha."}</small></span><input type="checkbox" checked={isPublic} disabled={!profile.publicAccessApproved} onChange={(event) => { setIsPublic(event.target.checked); if (!event.target.checked) setIsDiscoverable(false); }} /></label>
-          <label className="setting-toggle"><span><strong>Discoverable</strong><small>Allow your username to appear in People search.</small></span><input type="checkbox" checked={isDiscoverable} disabled={!isPublic} onChange={(event) => setIsDiscoverable(event.target.checked)} /></label>
+          <label className="profile-field"><span>Display name</span><input value={displayName} maxLength={80} onChange={(event) => setDisplayName(event.target.value)} required /></label>
+          <label className="profile-field"><span>Bio <small>{bio.length}/300</small></span><textarea value={bio} maxLength={300} onChange={(event) => setBio(event.target.value)} placeholder="A line about your taste in film" /></label>
+          <fieldset className="profile-privacy">
+            <legend>Privacy</legend>
+            <label className="setting-toggle"><span><strong>Public profile</strong><small>{profile.publicAccessApproved ? "Let people visit your diary and ranking." : "Public profiles are invite-only during the private alpha."}</small></span><input type="checkbox" checked={isPublic} disabled={!profile.publicAccessApproved} onChange={(event) => { setIsPublic(event.target.checked); if (!event.target.checked) setIsDiscoverable(false); }} /></label>
+            <label className="setting-toggle"><span><strong>Discoverable</strong><small>Allow your username to appear in People search.</small></span><input type="checkbox" checked={isDiscoverable} disabled={!isPublic} onChange={(event) => setIsDiscoverable(event.target.checked)} /></label>
+          </fieldset>
           {error ? <p className="profile-error" role="alert">{error}</p> : null}
           <div className="profile-form-actions"><button className="primary-action" type="submit" disabled={busy || !displayName.trim()}>{busy ? "Saving…" : "Save changes"}</button><button className="text-action muted" type="button" onClick={onSignOut} disabled={busy}>Sign out</button></div>
         </form>
-      </aside>
+      </section>
     </div>
   );
 }
 
 export function AboutSheet({ onClose }: { onClose: () => void }) {
   return (
-    <div className="about-overlay" role="dialog" aria-modal="true" aria-label="About After Credits">
+    <div className="about-overlay" role="dialog" aria-modal="true" aria-label="About Post Credits">
       <div className="about-sheet">
         <div className="about-topbar"><FilmRollIcon /><button className="sheet-close inline" onClick={onClose} aria-label="Close">×</button></div>
-        <h1>After Credits</h1>
+        <h1>Post Credits</h1>
         <p>A personal film diary where comparisons — not star ratings — keep an honest, living record of your taste.</p>
         <div className="about-definitions">
           <div><strong>Diary</strong><span>Your chronological viewing history. Every watch, rewatch, and DNF is a separate entry.</span></div>
@@ -151,6 +154,52 @@ export function AboutSheet({ onClose }: { onClose: () => void }) {
         <h2>Film data</h2>
         <p>Metadata and artwork are provided by TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
         <a href="https://www.themoviedb.org" target="_blank" rel="noreferrer">Visit The Movie Database ↗</a>
+      </div>
+    </div>
+  );
+}
+
+export function ImportLocalSheet({
+  entryCount,
+  watchlistCount,
+  busy,
+  progress,
+  error,
+  onImport,
+  onDismiss,
+}: {
+  entryCount: number;
+  watchlistCount: number;
+  busy: boolean;
+  progress: number;
+  error: string;
+  onImport: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="about-overlay import-overlay" role="dialog" aria-modal="true" aria-label="Bring your local diary">
+      <div className="about-sheet import-sheet">
+        <h1>Bring your local diary</h1>
+        <p>
+          You logged {entryCount} {entryCount === 1 ? "film" : "films"}
+          {watchlistCount ? ` and saved ${watchlistCount} to your Watchlist` : ""} on
+          this device before creating an account. Import them and your diary
+          follows you everywhere you sign in.
+        </p>
+        <ul className="import-notes">
+          <li>Watch dates, notes, and DNFs come across exactly as logged.</li>
+          <li>Rankings are rebuilt honestly: each imported film asks for its verdict and a few comparisons when you get to it.</li>
+          <li>A backup of the local data stays in this browser.</li>
+        </ul>
+        {error ? <p className="profile-error" role="alert">{error}</p> : null}
+        <div className="import-actions">
+          <button className="primary-action" onClick={onImport} disabled={busy}>
+            {busy ? `Importing ${Math.min(progress + 1, entryCount)} of ${entryCount}…` : "Import my diary"}
+          </button>
+          <button className="text-action muted" onClick={onDismiss} disabled={busy}>
+            Keep it on this device only
+          </button>
+        </div>
       </div>
     </div>
   );

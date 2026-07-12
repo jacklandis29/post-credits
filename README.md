@@ -1,6 +1,6 @@
-# After Credits
+# Post Credits
 
-After Credits is a film diary with comparison-based ranking.
+Post Credits is a film diary with comparison-based ranking.
 
 This repository currently contains a working private alpha:
 

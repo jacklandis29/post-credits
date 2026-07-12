@@ -23,21 +23,26 @@ async function render(pathname = "/") {
   );
 }
 
-test("server-renders the finished After Credits product", async () => {
+test("server-renders the finished Post Credits product", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>After Credits<\/title>/i);
-  assert.match(html, /After Credits/);
+  assert.match(html, /<title>Post Credits<\/title>/i);
+  assert.match(html, /Post Credits/);
   assert.match(html, /Loading/);
   const appSource = await readFile(
     new URL("../app/AfterCreditsApp.tsx", import.meta.url),
     "utf8",
   );
+  const logFlowSource = await readFile(
+    new URL("../app/components/LogFlow.tsx", import.meta.url),
+    "utf8",
+  );
   assert.match(appSource, /Diary/);
   assert.match(appSource, /Log a film/);
+  assert.match(logFlowSource, /Did not finish/);
   assert.doesNotMatch(html, /Your latest watch|There is no feed waiting underneath|class="eyebrow"/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });
@@ -51,7 +56,7 @@ test("removes starter-only preview infrastructure and metadata", async () => {
 
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
   assert.match(page, /AfterCreditsApp/);
-  assert.match(layout, /default: "After Credits"/);
+  assert.match(layout, /default: "Post Credits"/);
   assert.doesNotMatch(layout, /Starter Project|codex-preview/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 });

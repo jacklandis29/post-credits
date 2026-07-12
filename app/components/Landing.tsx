@@ -4,7 +4,15 @@
 
 import { movies } from "@/lib/seed";
 import type { Movie } from "@/lib/types";
+import { filmStyle } from "@/lib/ui";
 import { PosterArt } from "./media";
+
+const moods = [
+  { label: "Something gripping", movie: movies[8] },
+  { label: "Under two hours", movie: movies[3] },
+  { label: "A modern classic", movie: movies[4] },
+  { label: "Surprise me", movie: movies[6] },
+];
 
 export function Landing({
   onSignIn,
@@ -15,67 +23,61 @@ export function Landing({
   onBrowse: () => void;
   onFilm: (movie: Movie) => void;
 }) {
-  const featured = movies.slice(0, 6);
   const hero = movies[0];
+  const active = movies.slice(1, 7);
 
   return (
-    <div className="landing">
-      <section className="landing-hero">
-        {hero.backdrop ? (
-          <img className="landing-hero-art" src={hero.backdrop} alt="" aria-hidden="true" />
-        ) : null}
-        <div className="landing-hero-shade" aria-hidden="true" />
-        <div className="landing-hero-copy content-wrap">
-          <h1>A film diary that keeps itself in order.</h1>
-          <p>
-            Log what you watch and answer a few head-to-head questions.
-            After Credits turns your instincts into a ranked, living record
-            of your taste — no stars, no scores to invent.
-          </p>
+    <div className="landing discovery-home">
+      <section className="discovery-hero landing-discovery-hero" style={filmStyle(hero)}>
+        {hero.backdrop ? <img className="discovery-hero-art" src={hero.backdrop} alt="" aria-hidden="true" /> : null}
+        <div className="discovery-hero-shade" aria-hidden="true" />
+        <div className="discovery-hero-copy content-wrap">
+          <p className="discovery-kicker">Your next favorite is out there</p>
+          <h1>What should you watch tonight?</h1>
+          <p className="discovery-reason">Explore films now. Build a canon and the recommendations become entirely your own.</p>
           <div className="landing-actions">
-            <button className="primary-action" type="button" onClick={onSignIn}>
-              Start your diary
-            </button>
-            <button className="secondary-action" type="button" onClick={onBrowse}>
-              Search films and accounts
-            </button>
+            <button className="primary-action" type="button" onClick={onBrowse}>Search films</button>
+            <button className="secondary-action" type="button" onClick={onSignIn}>Start your canon</button>
+          </div>
+          <div className="mood-picker" aria-label="Browse by mood">
+            {moods.map(({ label, movie }) => (
+              <button key={label} type="button" onClick={() => onFilm(movie)}>{label}<span aria-hidden="true">↗</span></button>
+            ))}
           </div>
         </div>
       </section>
 
-      <section className="landing-steps content-wrap" aria-label="How it works">
-        <div>
-          <h2>Log</h2>
-          <p>Search any film, pick the date, keep a private note while the credits are still rolling.</p>
-        </div>
-        <div>
-          <h2>Compare</h2>
-          <p>Liked it, it was okay, or not for you — then a few &ldquo;which did you like more?&rdquo; choices place it among everything you&rsquo;ve seen.</p>
-        </div>
-        <div>
-          <h2>Revisit</h2>
-          <p>A diary by month, one all-time ranking, and a score derived from your own taste instead of the crowd&rsquo;s.</p>
-        </div>
-      </section>
+      <div className="content-wrap discovery-body landing-discovery-body">
+        <section className="discovery-intro">
+          <div><p className="discovery-kicker">On Post Credits</p><h2>See what people are watching.</h2></div>
+          <p>No crowd scores. No popularity contest. Just films passing through people&rsquo;s diaries right now.</p>
+        </section>
 
-      <section className="landing-strip content-wrap" aria-label="Featured films">
-        {featured.map((movie) => (
-          <button key={movie.id} type="button" onClick={() => onFilm(movie)}>
-            <PosterArt movie={movie} />
-            <span>
-              <strong>{movie.title}</strong>
-              <small>{movie.year}</small>
-            </span>
-          </button>
-        ))}
-      </section>
+        <section className="section-block">
+          <div className="section-heading"><div><p className="rail-kicker">Recently watched</p><h2>In the community&rsquo;s diaries</h2></div></div>
+          <div className="poster-rail">
+            {active.map((movie) => (
+              <button className="poster-card" key={movie.id} type="button" onClick={() => onFilm(movie)}>
+                <PosterArt movie={movie} />
+                <span className="poster-card-copy"><strong>{movie.title}</strong><small>{movie.year} · {movie.genres[0]}</small></span>
+              </button>
+            ))}
+          </div>
+        </section>
 
-      <section className="landing-final content-wrap">
-        <p>The film ends. Your record of it doesn&rsquo;t have to.</p>
-        <button className="primary-action" type="button" onClick={onSignIn}>
-          Start your diary
-        </button>
-      </section>
+        <section className="taste-promise">
+          <div>
+            <p className="discovery-kicker">Yours before theirs</p>
+            <h2>Recommendations shaped by your taste—not everyone else&rsquo;s ratings.</h2>
+          </div>
+          <div className="taste-steps">
+            <span><strong>01</strong>Log what you watch</span>
+            <span><strong>02</strong>Compare what you loved</span>
+            <span><strong>03</strong>Discover what comes next</span>
+          </div>
+          <button className="primary-action" type="button" onClick={onSignIn}>Start your canon</button>
+        </section>
+      </div>
     </div>
   );
 }

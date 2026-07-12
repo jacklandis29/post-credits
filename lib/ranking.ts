@@ -1,5 +1,5 @@
 /**
- * Pure domain logic for the After Credits canon.
+ * Pure domain logic for the Post Credits canon.
  *
  * Ranking sessions use zero-based insertion slots. For a bucket containing N
  * existing films there are N + 1 possible slots, numbered 0 through N. Both

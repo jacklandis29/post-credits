@@ -124,7 +124,7 @@ export function LogFilmFlow({
     <div className="log-overlay" role="dialog" aria-modal="true" aria-label="Log a film">
       <div className={`log-sheet log-step-${draft.step}`} style={draft.movie ? filmStyle(draft.movie) : undefined}>
         <div className="log-topbar">
-          <button className="log-brand" onClick={onClose} aria-label="Close logging flow and return to After Credits"><FilmRollIcon /><span>After Credits</span></button>
+          <button className="log-brand" onClick={onClose} aria-label="Close logging flow and return to Post Credits"><FilmRollIcon /><span>Post Credits</span></button>
           <span>{stepLabels[draft.step]}</span>
           <button className="sheet-close inline" onClick={onClose} aria-label="Close logging flow">×</button>
         </div>
@@ -143,6 +143,7 @@ export function LogFilmFlow({
               <label className="note-field"><span>Note <small>Optional · {draft.note.length} / 2,000</small></span><textarea value={draft.note} maxLength={2000} onChange={(event) => onUpdate({ note: event.target.value })} placeholder="What stayed with you?" /></label>
             </div>
             <div className="details-actions">
+              <button className="text-action dnf-action" onClick={() => onSave(true)}>Did not finish</button>
               <button className="primary-action" disabled={!isValidLocalDate(draft.watchedOn)} onClick={() => onSave(false)}>Score</button>
             </div>
           </div>
