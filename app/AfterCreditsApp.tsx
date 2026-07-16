@@ -12,6 +12,7 @@ import {
 } from "@/lib/ranking";
 import { cacheMovies, initialState, movieById, movies } from "@/lib/seed";
 import { movieSimilarity } from "@/lib/similarity";
+import { parseLocalState, safelyWriteLocalState, serializeLocalState } from "@/lib/local-state";
 import {
   beginRankingRecord,
   commitRankingRecord,
@@ -63,6 +64,7 @@ const STORAGE_KEY = "after-credits-local-v2";
 const IMPORT_DECIDED_KEY = "post-credits-import-decided-v1";
 const PENDING_LOG_KEY = "after-credits-pending-log-v1";
 const SIDEBAR_KEY = "after-credits-sidebar-collapsed";
+const IMPORT_PROGRESS_KEY = "post-credits-import-progress-v1";
 
 const views: View[] = ["home", "diary", "canon", "watchlist", "search", "profile"];
 
@@ -178,6 +180,8 @@ function AfterCreditsCore({
   const [importBusy, setImportBusy] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
   const importedEntryIds = useRef<Set<string>>(new Set());
+  const operationBusyRef = useRef(false);
+  const filmRestoreGeneration = useRef(0);
   const sidebarTransitionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeLogStep = log?.step ?? null;
 
@@ -197,12 +201,11 @@ function AfterCreditsCore({
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-
     async function restoreFilmFromLocation() {
+      const generation = ++filmRestoreGeneration.current;
       const movieId = filmIdFromLocation();
       if (!movieId) {
-        if (!cancelled) setSelectedFilm(null);
+        setSelectedFilm(null);
         return;
       }
       let movie = movieById(movieId);
@@ -218,7 +221,9 @@ function AfterCreditsCore({
       } catch {
         // Cached film data is enough to restore the sheet when offline.
       }
-      if (!cancelled && filmIdFromLocation() === movieId) setSelectedFilm(movie);
+      if (generation === filmRestoreGeneration.current && filmIdFromLocation() === movieId) {
+        setSelectedFilm(movie);
+      }
     }
 
     function restoreFilmFromHistory() {
@@ -228,7 +233,7 @@ function AfterCreditsCore({
     void restoreFilmFromLocation();
     window.addEventListener("popstate", restoreFilmFromHistory);
     return () => {
-      cancelled = true;
+      filmRestoreGeneration.current += 1;
       window.removeEventListener("popstate", restoreFilmFromHistory);
     };
   }, []);
@@ -314,9 +319,9 @@ function AfterCreditsCore({
     let savedState: AppState | null = null;
     try {
       const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (saved) savedState = JSON.parse(saved) as AppState;
+      if (saved) savedState = parseLocalState(saved);
     } catch {
-      window.localStorage.removeItem(STORAGE_KEY);
+      queueMicrotask(() => setOperationError("The saved local diary could not be read. It has been left in place so it can be recovered."));
     }
     queueMicrotask(() => {
       if (savedState) {
@@ -329,7 +334,8 @@ function AfterCreditsCore({
 
   useEffect(() => {
     if (!hydrated || connection || publicMode) return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const result = safelyWriteLocalState(window.localStorage, STORAGE_KEY, state);
+    if (result.error) queueMicrotask(() => setOperationError(result.error!));
   }, [connection, hydrated, publicMode, state]);
 
   useEffect(() => {
@@ -337,7 +343,15 @@ function AfterCreditsCore({
     function syncFromAnotherTab(event: StorageEvent) {
       if (event.key !== STORAGE_KEY || !event.newValue) return;
       try {
-        const incoming = JSON.parse(event.newValue) as AppState;
+        const incoming = parseLocalState(event.newValue);
+        if (!incoming) return;
+        const currentRevision = state.activeRankingRevision ?? 0;
+        const incomingRevision = incoming.activeRankingRevision ?? 0;
+        if (
+          state.activeRankingSessionId &&
+          incoming.activeRankingSessionId === state.activeRankingSessionId &&
+          incomingRevision < currentRevision
+        ) return;
         cacheMovies(incoming.movieCache ?? []);
         setState(incoming);
         setLog((current) => {
@@ -376,12 +390,14 @@ function AfterCreditsCore({
     }
     window.addEventListener("storage", syncFromAnotherTab);
     return () => window.removeEventListener("storage", syncFromAnotherTab);
-  }, [connection, publicMode]);
+  }, [connection, publicMode, state.activeRankingRevision, state.activeRankingSessionId]);
 
   useEffect(() => {
     function closeTopLayer(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       if (aboutOpen) setAboutOpen(false);
+      else if (importOffer && !importBusy) setImportOffer(null);
+      else if (accountMenuOpen) setAccountMenuOpen(false);
       else if (profileOpen) setProfileOpen(false);
       else if (selectedPublicProfile) setSelectedPublicProfile(null);
       else if (log) setLog(null);
@@ -393,7 +409,7 @@ function AfterCreditsCore({
     }
     window.addEventListener("keydown", closeTopLayer);
     return () => window.removeEventListener("keydown", closeTopLayer);
-  }, [aboutOpen, log, profileOpen, quickSearchOpen, selectedFilm, selectedPublicProfile]);
+  }, [aboutOpen, accountMenuOpen, importBusy, importOffer, log, profileOpen, quickSearchOpen, selectedFilm, selectedPublicProfile]);
 
   const hasAboutLayer = aboutOpen;
   const hasProfileLayer = profileOpen;
@@ -401,16 +417,17 @@ function AfterCreditsCore({
   const hasLogLayer = Boolean(log);
   const hasFilmLayer = Boolean(selectedFilm);
   const hasQuickSearchLayer = quickSearchOpen;
+  const hasImportLayer = Boolean(importOffer);
 
   useEffect(() => {
     const anyLayer =
       hasAboutLayer || hasProfileLayer || hasPublicProfileLayer || hasLogLayer || hasFilmLayer ||
-      hasQuickSearchLayer || Boolean(importOffer);
+      hasQuickSearchLayer || hasImportLayer;
     document.documentElement.style.overflow = anyLayer ? "hidden" : "";
     return () => {
       document.documentElement.style.overflow = "";
     };
-  }, [hasAboutLayer, hasFilmLayer, hasLogLayer, hasProfileLayer, hasPublicProfileLayer, hasQuickSearchLayer, importOffer]);
+  }, [hasAboutLayer, hasFilmLayer, hasImportLayer, hasLogLayer, hasProfileLayer, hasPublicProfileLayer, hasQuickSearchLayer]);
 
   useEffect(() => {
     if (!accountMenuOpen) return;
@@ -429,7 +446,8 @@ function AfterCreditsCore({
     try {
       const saved = window.localStorage.getItem(STORAGE_KEY);
       if (!saved) return;
-      const local = JSON.parse(saved) as AppState;
+      const local = parseLocalState(saved);
+      if (!local) return;
       if (!local.diary?.length) return;
       cacheMovies(local.movieCache ?? []);
       queueMicrotask(() => setImportOffer(local));
@@ -439,7 +457,9 @@ function AfterCreditsCore({
   }, [connection, hydrated]);
 
   useEffect(() => {
-    const selector = hasAboutLayer
+    const selector = hasImportLayer
+      ? ".import-overlay"
+      : hasAboutLayer
       ? ".about-overlay"
       : hasProfileLayer
         ? ".profile-overlay"
@@ -485,7 +505,7 @@ function AfterCreditsCore({
       root.removeEventListener("keydown", keepFocusInside);
       previousFocus?.focus();
     };
-  }, [activeLogStep, hasAboutLayer, hasFilmLayer, hasLogLayer, hasProfileLayer, hasPublicProfileLayer, hasQuickSearchLayer]);
+  }, [activeLogStep, hasAboutLayer, hasFilmLayer, hasImportLayer, hasLogLayer, hasProfileLayer, hasPublicProfileLayer, hasQuickSearchLayer]);
 
   useEffect(() => {
     const peopleClient = connection?.client ?? publicClient;
@@ -637,12 +657,16 @@ function AfterCreditsCore({
   }
 
   function runConnected(work: () => Promise<void>) {
-    if (!connection || operationBusy) return;
+    if (!connection || operationBusyRef.current) return;
+    operationBusyRef.current = true;
     setOperationBusy(true);
     setOperationError("");
     void work()
       .catch((error) => setOperationError(readableError(error)))
-      .finally(() => setOperationBusy(false));
+      .finally(() => {
+        operationBusyRef.current = false;
+        setOperationBusy(false);
+      });
   }
 
   async function importLocalDiary() {
@@ -650,6 +674,12 @@ function AfterCreditsCore({
     setImportBusy(true);
     setOperationError("");
     try {
+      try {
+        const savedProgress = window.localStorage.getItem(IMPORT_PROGRESS_KEY);
+        if (savedProgress) importedEntryIds.current = new Set(JSON.parse(savedProgress) as string[]);
+      } catch {
+        importedEntryIds.current.clear();
+      }
       const localCache = importOffer.movieCache ?? [];
       const movieFor = (movieId: number) =>
         localCache.find((cached) => cached.id === movieId) ?? movieById(movieId);
@@ -668,8 +698,13 @@ function AfterCreditsCore({
             note: entry.note,
             visibility: entry.visibility,
             dnf: entry.completionStatus === "dnf",
+            importKey: entry.id,
           });
           importedEntryIds.current.add(entry.id);
+          window.localStorage.setItem(
+            IMPORT_PROGRESS_KEY,
+            JSON.stringify([...importedEntryIds.current]),
+          );
         }
         done += 1;
         setImportProgress(done);
@@ -681,13 +716,14 @@ function AfterCreditsCore({
           shouldAdd: true,
         });
       }
-      window.localStorage.setItem(IMPORT_DECIDED_KEY, "imported");
+      await refreshConnectedState();
       window.localStorage.setItem(
         `${STORAGE_KEY}-imported-backup`,
-        JSON.stringify(importOffer),
+        serializeLocalState(importOffer),
       );
+      window.localStorage.setItem(IMPORT_DECIDED_KEY, "imported");
+      window.localStorage.removeItem(IMPORT_PROGRESS_KEY);
       window.localStorage.removeItem(STORAGE_KEY);
-      await refreshConnectedState();
       setImportOffer(null);
     } catch (error) {
       setOperationError(readableError(error));
@@ -706,7 +742,8 @@ function AfterCreditsCore({
     try {
       const saved = window.localStorage.getItem(STORAGE_KEY);
       if (saved) {
-        const parsed = JSON.parse(saved) as AppState;
+        const parsed = parseLocalState(saved);
+        if (!parsed) return state;
         cacheMovies(parsed.movieCache ?? []);
         return parsed;
       }
@@ -719,7 +756,8 @@ function AfterCreditsCore({
   function writeAuthoritativeState(next: AppState) {
     cacheMovies(next.movieCache ?? []);
     if (!connection && !publicMode) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      const result = safelyWriteLocalState(window.localStorage, STORAGE_KEY, next);
+      if (result.error) setOperationError(result.error);
     }
     setState(next);
   }
@@ -1507,7 +1545,7 @@ function AfterCreditsCore({
 
   function toggleWatchlist(movieId: number) {
     if (requireSignIn()) return;
-    if (connection && operationBusy) return;
+    if (connection && operationBusyRef.current) return;
     const shouldAdd = !state.watchlist.some((item) => item.movieId === movieId);
     const applyOptimisticState = (current: AppState, add: boolean): AppState => ({
       ...current,
@@ -1515,7 +1553,7 @@ function AfterCreditsCore({
         ? [{ movieId, addedAt: new Date().toISOString() }, ...current.watchlist.filter((item) => item.movieId !== movieId)]
         : current.watchlist.filter((item) => item.movieId !== movieId),
     });
-    setState((current) => applyOptimisticState(current, shouldAdd));
+    if (connection) setState((current) => applyOptimisticState(current, shouldAdd));
     if (connection) {
       const movie = movieById(movieId);
       runConnected(async () => {
@@ -1533,6 +1571,7 @@ function AfterCreditsCore({
       });
       return;
     }
+    writeAuthoritativeState(applyOptimisticState(readAuthoritativeState(), shouldAdd));
   }
 
   function openView(next: View) {
@@ -1900,6 +1939,8 @@ function AfterCreditsCore({
           error={operationError}
           onSave={saveProfileSettings}
           onSignOut={() => runConnected(connection.signOut)}
+          onSignOutEverywhere={() => runConnected(connection.signOutEverywhere)}
+          onDeleteAccount={(username) => runConnected(() => connection.deleteAccount(username))}
           onClose={() => setProfileOpen(false)}
         />
       ) : null}

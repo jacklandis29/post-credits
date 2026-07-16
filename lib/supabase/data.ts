@@ -572,21 +572,34 @@ export async function insertWatchEntry(
     note: string;
     visibility: DiaryEntry["visibility"];
     dnf: boolean;
+    importKey?: string;
   },
 ): Promise<DiaryEntry> {
   await cacheMovieRecord(client, input.movie);
-  const { data, error } = await client
+  const values = {
+    user_id: input.userId,
+    tmdb_id: input.movie.id,
+    watched_on: input.watchedOn,
+    completion_status: input.dnf ? "dnf" : "completed",
+    note: input.note.trim() || null,
+    visibility: input.visibility,
+    ...(input.importKey ? { client_import_id: input.importKey } : {}),
+  };
+  let { data, error } = await client
     .from("watch_entries")
-    .insert({
-      user_id: input.userId,
-      tmdb_id: input.movie.id,
-      watched_on: input.watchedOn,
-      completion_status: input.dnf ? "dnf" : "completed",
-      note: input.note.trim() || null,
-      visibility: input.visibility,
-    })
+    .insert(values)
     .select("*")
     .single();
+  if (error?.code === "23505" && input.importKey) {
+    const existing = await client
+      .from("watch_entries")
+      .select("*")
+      .eq("user_id", input.userId)
+      .eq("client_import_id", input.importKey)
+      .single();
+    data = existing.data;
+    error = existing.error;
+  }
   if (error) throw error;
   const row = data as DbRow;
   return {

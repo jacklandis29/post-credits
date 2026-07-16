@@ -143,7 +143,7 @@ export function LogFilmFlow({
               <label className="note-field"><span>Note <small>Optional · {draft.note.length} / 2,000</small></span><textarea value={draft.note} maxLength={2000} onChange={(event) => onUpdate({ note: event.target.value })} placeholder="What stayed with you?" /></label>
             </div>
             <div className="details-actions">
-              <button className="text-action dnf-action" onClick={() => onSave(true)}>Did not finish</button>
+              <button className="text-action dnf-action" disabled={!isValidLocalDate(draft.watchedOn)} onClick={() => onSave(true)}>Did not finish</button>
               <button className="primary-action" disabled={!isValidLocalDate(draft.watchedOn)} onClick={() => onSave(false)}>Score</button>
             </div>
           </div>

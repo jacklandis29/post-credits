@@ -90,6 +90,8 @@ export function ProfileSheet({
   error,
   onSave,
   onSignOut,
+  onSignOutEverywhere,
+  onDeleteAccount,
   onClose,
 }: {
   profile: ConnectedSupabase["profile"];
@@ -102,12 +104,17 @@ export function ProfileSheet({
     isDiscoverable: boolean;
   }) => void;
   onSignOut: () => void;
+  onSignOutEverywhere: () => void;
+  onDeleteAccount: (username: string) => void;
   onClose: () => void;
 }) {
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [bio, setBio] = useState(profile.bio);
   const [isPublic, setIsPublic] = useState(profile.isPublic);
   const [isDiscoverable, setIsDiscoverable] = useState(profile.isDiscoverable);
+  const [confirmGlobalSignOut, setConfirmGlobalSignOut] = useState(false);
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -131,8 +138,55 @@ export function ProfileSheet({
             <label className="setting-toggle"><span><strong>Public profile</strong><small>{profile.publicAccessApproved ? "Let people visit your diary and ranking." : "Public profiles are invite-only during the private alpha."}</small></span><input type="checkbox" checked={isPublic} disabled={!profile.publicAccessApproved} onChange={(event) => { setIsPublic(event.target.checked); if (!event.target.checked) setIsDiscoverable(false); }} /></label>
             <label className="setting-toggle"><span><strong>Discoverable</strong><small>Allow your username to appear in People search.</small></span><input type="checkbox" checked={isDiscoverable} disabled={!isPublic} onChange={(event) => setIsDiscoverable(event.target.checked)} /></label>
           </fieldset>
+          <fieldset className="profile-privacy">
+            <legend>Account security</legend>
+            <div className="setting-toggle">
+              <span><strong>Other signed-in devices</strong><small>Revoke every session if a device is lost or you notice suspicious activity.</small></span>
+              <button
+                className="text-action muted"
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  if (confirmGlobalSignOut) onSignOutEverywhere();
+                  else setConfirmGlobalSignOut(true);
+                }}
+              >
+                {confirmGlobalSignOut ? "Confirm sign out everywhere" : "Sign out everywhere"}
+              </button>
+            </div>
+          </fieldset>
+          <fieldset className="profile-privacy profile-danger-zone">
+            <legend>Danger zone</legend>
+            <div className="setting-toggle">
+              <span><strong>Delete account</strong><small>Permanently delete your profile, diary, ranking, Watchlist, and every active session.</small></span>
+              <button className="text-action danger" type="button" disabled={busy} onClick={() => setShowDeleteAccount((visible) => !visible)}>Delete account</button>
+            </div>
+            {showDeleteAccount ? (
+              <div className="profile-delete-confirmation">
+                <label className="profile-field">
+                  <span>Type @{profile.username} to confirm</span>
+                  <input
+                    type="text"
+                    value={deleteConfirmation}
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    onChange={(event) => setDeleteConfirmation(event.target.value)}
+                  />
+                </label>
+                <button
+                  className="primary-action danger"
+                  type="button"
+                  disabled={busy || deleteConfirmation.trim().toLowerCase() !== profile.username.toLowerCase()}
+                  onClick={() => onDeleteAccount(deleteConfirmation)}
+                >
+                  {busy ? "Deleting…" : "Permanently delete account"}
+                </button>
+              </div>
+            ) : null}
+          </fieldset>
           {error ? <p className="profile-error" role="alert">{error}</p> : null}
-          <div className="profile-form-actions"><button className="primary-action" type="submit" disabled={busy || !displayName.trim()}>{busy ? "Saving…" : "Save changes"}</button><button className="text-action muted" type="button" onClick={onSignOut} disabled={busy}>Sign out</button></div>
+          <div className="profile-form-actions"><button className="primary-action" type="submit" disabled={busy || !displayName.trim()}>{busy ? "Saving…" : "Save changes"}</button><button className="text-action muted" type="button" onClick={onSignOut} disabled={busy}>Sign out on this device</button></div>
         </form>
       </section>
     </div>

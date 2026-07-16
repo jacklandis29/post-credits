@@ -1,6 +1,6 @@
 "use client";
 
-import type { Session, SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   type FormEvent,
   type ReactNode,
@@ -19,8 +19,12 @@ import {
 import {
   getSupabaseBrowserClient,
   isSupabaseConfigured,
+  loadSupabaseAuthCapabilities,
 } from "@/lib/supabase/client";
 import type { AppState } from "@/lib/types";
+import { Turnstile } from "./components/Turnstile";
+
+const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
 
 export type ConnectedSupabase = {
   client: SupabaseClient;
@@ -29,6 +33,8 @@ export type ConnectedSupabase = {
   initialState: AppState;
   refresh: () => Promise<AppState>;
   signOut: () => Promise<void>;
+  signOutEverywhere: () => Promise<void>;
+  deleteAccount: (username: string) => Promise<void>;
 };
 
 type GatePhase =
@@ -69,9 +75,62 @@ function friendlyAuthError(error: unknown): string {
   const message = errorMessage(error);
   const normalized = message.toLowerCase();
   if (normalized.includes("rate limit") || normalized.includes("too many requests")) {
-    return "Supabase has temporarily paused email links for this project. Continue with Google now, or try email again after the cooldown.";
+    return "Too many sign-in attempts were made. Try again in a few minutes.";
   }
-  return message;
+  if (normalized.includes("access_denied") || normalized.includes("access denied")) {
+    return "Sign-in was canceled. No changes were made.";
+  }
+  if (
+    normalized.includes("expired") ||
+    normalized.includes("invalid") ||
+    normalized.includes("otp") ||
+    normalized.includes("token")
+  ) {
+    return "That sign-in link is invalid or has expired. Request a new link and try again.";
+  }
+  if (normalized.includes("provider") && normalized.includes("enabled")) {
+    return "That sign-in method is temporarily unavailable. Try another option.";
+  }
+  return "We couldn’t sign you in. Please try again.";
+}
+
+function isMissingOrInvalidSession(error: unknown): boolean {
+  const name = error && typeof error === "object" && "name" in error
+    ? String((error as { name?: unknown }).name)
+    : "";
+  const status = error && typeof error === "object" && "status" in error
+    ? Number((error as { status?: unknown }).status)
+    : 0;
+  const message = errorMessage(error).toLowerCase();
+  return (
+    name === "AuthSessionMissingError" ||
+    status === 401 ||
+    status === 403 ||
+    message.includes("auth session missing") ||
+    message.includes("invalid refresh token") ||
+    message.includes("refresh token not found")
+  );
+}
+
+function readAndClearAuthCallbackError(): string {
+  const url = new URL(window.location.href);
+  const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
+  const description =
+    url.searchParams.get("error_description") ??
+    hash.get("error_description") ??
+    url.searchParams.get("error_code") ??
+    hash.get("error_code") ??
+    url.searchParams.get("error") ??
+    hash.get("error");
+  if (!description) return "";
+
+  for (const key of ["error", "error_code", "error_description"]) {
+    url.searchParams.delete(key);
+    hash.delete(key);
+  }
+  url.hash = hash.size > 0 ? hash.toString() : "";
+  window.history.replaceState(window.history.state, "", url);
+  return friendlyAuthError(new Error(description));
 }
 
 function isMissingSchema(error: unknown): boolean {
@@ -86,10 +145,12 @@ function isMissingSchema(error: unknown): boolean {
 
 function AuthCard({
   client,
+  initialError,
   onBack,
   onLocalMode,
 }: {
   client: SupabaseClient;
+  initialError?: string;
   onBack?: () => void;
   onLocalMode?: () => void;
 }) {
@@ -98,7 +159,28 @@ function AuthCard({
     null,
   );
   const [sent, setSent] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(initialError ?? "");
+  const [captchaToken, setCaptchaToken] = useState("");
+  const [captchaUnavailable, setCaptchaUnavailable] = useState(false);
+  const [captchaGeneration, setCaptchaGeneration] = useState(0);
+  const [authCapabilities, setAuthCapabilities] = useState({
+    email: true,
+    google: false,
+  });
+  const handleCaptchaUnavailable = useCallback(() => {
+    setCaptchaUnavailable(true);
+    setCaptchaToken("");
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    void loadSupabaseAuthCapabilities().then((capabilities) => {
+      if (!disposed) setAuthCapabilities(capabilities);
+    });
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   async function sendMagicLink(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -107,14 +189,28 @@ function AuthCard({
       setError("Enter your email address.");
       return;
     }
+    if (turnstileSiteKey && !captchaToken) {
+      setError(
+        captchaUnavailable
+          ? "The security check could not load. Check your connection or continue with Google."
+          : "Complete the security check before requesting a link.",
+      );
+      return;
+    }
 
     setPendingAction("email");
     setError("");
     setSent(false);
     const { error: authError } = await client.auth.signInWithOtp({
       email: normalizedEmail,
-      options: { emailRedirectTo: `${window.location.origin}${window.location.pathname}` },
+      options: {
+        emailRedirectTo: `${window.location.origin}${window.location.pathname}`,
+        shouldCreateUser: true,
+        captchaToken: captchaToken || undefined,
+      },
     });
+    setCaptchaToken("");
+    setCaptchaGeneration((generation) => generation + 1);
     setPendingAction(null);
     if (authError) {
       setError(friendlyAuthError(authError));
@@ -145,14 +241,17 @@ function AuthCard({
         </div>
         <p className="supabase-auth-kicker">Your private film journal</p>
         <h1 id="sign-in-title">Sign in or create account</h1>
-        <p className="supabase-auth-intro">One secure email link does both — if you&rsquo;re new, your account is created automatically. Or continue with Google.</p>
-        <form className="supabase-auth-form" onSubmit={sendMagicLink}>
+        <p className="supabase-auth-intro">{authCapabilities.email ? <>One secure email link does both — if you&rsquo;re new, your account is created automatically.{authCapabilities.google ? " Or continue with Google." : ""}</> : authCapabilities.google ? "Continue with Google to open your private film journal." : "Sign-in is temporarily unavailable. Please try again later."}</p>
+        {authCapabilities.email ? <form className="supabase-auth-form" onSubmit={sendMagicLink}>
           <label>
             <span>Email</span>
             <input
               type="email"
               name="email"
               autoComplete="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               value={email}
               onChange={(event) => {
                 setEmail(event.target.value);
@@ -170,16 +269,24 @@ function AuthCard({
           >
             {pendingAction === "email" ? "Sending…" : sent ? "Link sent" : "Send magic link"}
           </button>
-        </form>
-        <div className="supabase-auth-divider"><span>or</span></div>
-        <button
+        </form> : null}
+        {authCapabilities.email && turnstileSiteKey ? (
+          <Turnstile
+            key={captchaGeneration}
+            siteKey={turnstileSiteKey}
+            onToken={setCaptchaToken}
+            onUnavailable={handleCaptchaUnavailable}
+          />
+        ) : null}
+        {authCapabilities.email && authCapabilities.google ? <div className="supabase-auth-divider"><span>or</span></div> : null}
+        {authCapabilities.google ? <button
           className="supabase-auth-secondary"
           type="button"
           onClick={() => void signInWithGoogle()}
           disabled={pendingAction !== null}
         >
           {pendingAction === "google" ? "Redirecting…" : "Continue with Google"}
-        </button>
+        </button> : null}
         {onLocalMode ? (
           <button className="supabase-auth-local" type="button" onClick={onLocalMode} disabled={pendingAction !== null}>
             Continue locally on this device
@@ -205,11 +312,13 @@ function ProfileSetup({
   userId,
   onComplete,
   onSchemaMissing,
+  onSignOut,
 }: {
   client: SupabaseClient;
   userId: string;
   onComplete: () => Promise<void>;
   onSchemaMissing: () => void;
+  onSignOut: () => Promise<void>;
 }) {
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -258,7 +367,7 @@ function ProfileSetup({
   return (
     <main className="supabase-auth-shell">
       <section className="supabase-auth-card" aria-labelledby="profile-title">
-        <div className="supabase-auth-topbar"><span className="supabase-auth-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M8 4.75h8" strokeWidth="1.9" strokeLinecap="round" opacity="0.28" /><path d="M5.5 9.25h13" strokeWidth="1.9" strokeLinecap="round" opacity="0.52" /><path d="M7 13.75h10" strokeWidth="1.9" strokeLinecap="round" opacity="0.78" /><circle cx="12" cy="19" r="1.7" fill="currentColor" stroke="none" /></svg></span></div>
+        <div className="supabase-auth-topbar"><span className="supabase-auth-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M8 4.75h8" strokeWidth="1.9" strokeLinecap="round" opacity="0.28" /><path d="M5.5 9.25h13" strokeWidth="1.9" strokeLinecap="round" opacity="0.52" /><path d="M7 13.75h10" strokeWidth="1.9" strokeLinecap="round" opacity="0.78" /><circle cx="12" cy="19" r="1.7" fill="currentColor" stroke="none" /></svg></span><button className="supabase-auth-back" type="button" onClick={() => void onSignOut()} disabled={pending}>Sign out</button></div>
         <h1 id="profile-title">Create profile</h1>
         <form className="supabase-auth-form" onSubmit={saveProfile}>
           <label>
@@ -328,7 +437,10 @@ function ConfiguredSupabaseGate({ children, signedOut }: SupabaseGateProps) {
   const client = useMemo(() => getSupabaseBrowserClient(), []);
   const [phase, setPhase] = useState<GatePhase>({ name: "loading" });
   const [showLoading, setShowLoading] = useState(false);
-  const [showSignIn, setShowSignIn] = useState(false);
+  const [callbackError, setCallbackError] = useState(() =>
+    typeof window === "undefined" ? "" : readAndClearAuthCallbackError(),
+  );
+  const [showSignIn, setShowSignIn] = useState(() => Boolean(callbackError));
   const [localMode, setLocalMode] = useState(false);
   const generation = useRef(0);
 
@@ -353,8 +465,40 @@ function ConfiguredSupabaseGate({ children, signedOut }: SupabaseGateProps) {
           initialState,
           refresh: () => loadUserState(client, userId),
           signOut: async () => {
-            const { error } = await client.auth.signOut();
+            const { error } = await client.auth.signOut({ scope: "local" });
             if (error) throw error;
+          },
+          signOutEverywhere: async () => {
+            const { error } = await client.auth.signOut({ scope: "global" });
+            if (error) throw error;
+          },
+          deleteAccount: async (username: string) => {
+            const {
+              data: { session },
+              error: sessionError,
+            } = await client.auth.getSession();
+            if (sessionError) throw sessionError;
+            if (!session?.access_token) throw new Error("Authentication required");
+
+            const response = await fetch("/api/account", {
+              method: "DELETE",
+              headers: {
+                authorization: `Bearer ${session.access_token}`,
+                "content-type": "application/json",
+              },
+              body: JSON.stringify({ username }),
+            });
+            const payload = await response.json().catch(() => null) as {
+              error?: unknown;
+            } | null;
+            if (!response.ok) {
+              throw new Error(
+                typeof payload?.error === "string"
+                  ? payload.error
+                  : "Could not delete the account",
+              );
+            }
+            await client.auth.signOut({ scope: "local" });
           },
         };
         setPhase({ name: "ready", connection });
@@ -380,9 +524,8 @@ function ConfiguredSupabaseGate({ children, signedOut }: SupabaseGateProps) {
     let disposed = false;
     let resolvedUserId: string | null | undefined;
 
-    function applySession(session: Session | null) {
+    function applyUserId(userId: string | null) {
       if (disposed) return;
-      const userId = session?.user.id ?? null;
       if (resolvedUserId === userId) return;
       resolvedUserId = userId;
       if (!userId) {
@@ -394,19 +537,28 @@ function ConfiguredSupabaseGate({ children, signedOut }: SupabaseGateProps) {
       void loadAccount(userId);
     }
 
-    void client.auth.getSession().then(({ data, error }) => {
+    void client.auth.getUser().then(({ data, error }) => {
       if (disposed) return;
       if (error) {
-        setPhase({ name: "error", message: error.message });
+        if (isMissingOrInvalidSession(error)) {
+          void client.auth.signOut({ scope: "local" });
+          applyUserId(null);
+          return;
+        }
+        setPhase({
+          name: "error",
+          message: "Could not securely verify this session. Check your connection and try again.",
+        });
         return;
       }
-      applySession(data.session);
+      applyUserId(data.user?.id ?? null);
     });
 
     const {
       data: { subscription },
-    } = client.auth.onAuthStateChange((_event, session) => {
-      queueMicrotask(() => applySession(session));
+    } = client.auth.onAuthStateChange((event, session) => {
+      if (event === "INITIAL_SESSION") return;
+      queueMicrotask(() => applyUserId(session?.user.id ?? null));
     });
 
     return () => {
@@ -442,7 +594,11 @@ function ConfiguredSupabaseGate({ children, signedOut }: SupabaseGateProps) {
         {signedOut ? signedOut(() => setShowSignIn(true), client) : null}
         <AuthCard
           client={client}
-          onBack={signedOut ? () => setShowSignIn(false) : undefined}
+          initialError={callbackError}
+          onBack={signedOut ? () => {
+            setCallbackError("");
+            setShowSignIn(false);
+          } : undefined}
           onLocalMode={process.env.NODE_ENV !== "production" ? () => setLocalMode(true) : undefined}
         />
       </>
@@ -455,6 +611,12 @@ function ConfiguredSupabaseGate({ children, signedOut }: SupabaseGateProps) {
         userId={phase.userId}
         onComplete={() => loadAccount(phase.userId)}
         onSchemaMissing={() => setPhase({ name: "schema_missing" })}
+        onSignOut={async () => {
+          const { error } = await client.auth.signOut({ scope: "local" });
+          if (error) {
+            setPhase({ name: "error", message: "Could not sign out. Please try again." });
+          }
+        }}
       />
     );
   }

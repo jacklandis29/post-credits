@@ -37,7 +37,7 @@ With Supabase configured, the public site and TMDB browsing remain visible while
 
 ## TMDB
 
-Copy `.env.example` to `.env.local` and set either:
+Copy `.env.example` to `.env` and set either:
 
 ```bash
 TMDB_API_TOKEN=your_read_access_token

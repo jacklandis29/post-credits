@@ -27,6 +27,9 @@ test("server-renders the finished Post Credits product", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(response.headers.get("x-frame-options"), "DENY");
+  assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
 
   const html = await response.text();
   assert.match(html, /<title>Post Credits<\/title>/i);
@@ -43,6 +46,7 @@ test("server-renders the finished Post Credits product", async () => {
   assert.match(appSource, /Diary/);
   assert.match(appSource, /Log a film/);
   assert.match(logFlowSource, /Did not finish/);
+  assert.match(logFlowSource, /dnf-action" disabled=\{!isValidLocalDate/);
   assert.doesNotMatch(html, /Your latest watch|There is no feed waiting underneath|class="eyebrow"/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
 });

@@ -26,7 +26,10 @@ export async function generateMetadata(): Promise<Metadata> {
     (host.startsWith("localhost") || host.startsWith("127.0.0.1")
       ? "http"
       : "https");
-  const metadataBase = new URL(`${protocol}://${host}`);
+  const configuredSiteUrl = process.env.SITE_URL;
+  const metadataBase = configuredSiteUrl
+    ? new URL(configuredSiteUrl)
+    : new URL(`${protocol}://${host}`);
   return {
     metadataBase,
     title: {
@@ -43,12 +46,15 @@ export async function generateMetadata(): Promise<Metadata> {
       description: "Film diary with comparison-based ranking.",
       type: "website",
       siteName: "Post Credits",
+      images: [{ url: "/og.png", width: 1200, height: 630, alt: "Post Credits film diary" }],
     },
     twitter: {
       card: "summary_large_image",
       title: "Post Credits",
       description: "Film diary with comparison-based ranking.",
+      images: ["/og.png"],
     },
+    manifest: "/manifest.webmanifest",
   };
 }
 

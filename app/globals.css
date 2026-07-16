@@ -55,6 +55,10 @@ body {
 button, input, textarea, select { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button { color: inherit; cursor: pointer; }
+
+.route-error { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 1rem; padding: 2rem; text-align: center; background: #0c0b10; color: #f7f3ed; }
+.route-error p { color: #aaa2b6; text-transform: uppercase; letter-spacing: .12em; }
+.route-error h1 { font-family: var(--font-fraunces), serif; font-size: clamp(2rem, 5vw, 4rem); }
 button:disabled { cursor: default; opacity: 0.55; }
 
 button:focus-visible,
@@ -2970,6 +2974,19 @@ kbd {
 .setting-toggle input { flex: 0 0 auto; width: 18px; height: 18px; margin: 0; accent-color: var(--cream); }
 .setting-toggle input:disabled { opacity: 0.4; }
 
+.profile-danger-zone { border-color: rgba(196, 96, 96, 0.28); }
+.text-action.danger { color: #df9d9d; }
+.profile-delete-confirmation {
+  display: grid;
+  gap: 14px;
+  padding: 0 16px 16px;
+  border-top: 1px solid rgba(196, 96, 96, 0.2);
+}
+.profile-delete-confirmation .profile-field { padding-top: 15px; }
+.profile-delete-confirmation .primary-action { justify-self: start; }
+.primary-action.danger { background: #b84b4b; color: #fff; }
+.primary-action.danger:hover:not(:disabled) { background: #ca5858; }
+
 .profile-error { color: #edc9c9; font-size: 13px; }
 .profile-form-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 2px; }
 
@@ -3117,6 +3134,8 @@ kbd {
 .supabase-auth-intro { color: var(--quiet); font-size: 13.5px; line-height: 1.55; }
 
 .supabase-auth-form { display: grid; gap: 12px; margin-top: 6px; }
+.turnstile-slot { min-height: 0; overflow: hidden; }
+.turnstile-slot:not(:empty) { min-height: 65px; }
 .supabase-auth-form label { display: grid; gap: 6px; }
 .supabase-auth-form label span {
   color: var(--quiet);
