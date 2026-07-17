@@ -86,11 +86,11 @@ select
       )
     )
   ) as note_is_public,
-  entry.contains_spoilers,
-  entry.tags,
   entry.is_rewatch,
   entry.created_at,
-  entry.updated_at
+  entry.updated_at,
+  entry.contains_spoilers,
+  entry.tags
 from public.watch_entries as entry
 join public.profiles as profile on profile.id = entry.user_id
 where profile.is_public;
