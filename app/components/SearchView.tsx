@@ -16,6 +16,7 @@ export function SearchView({
   profileBusy,
   movieError,
   profilesAvailable,
+  filterLabel,
   onQuery,
   onFilm,
   onProfile,
@@ -27,6 +28,7 @@ export function SearchView({
   profileBusy: boolean;
   movieError: string;
   profilesAvailable: boolean;
+  filterLabel?: string | null;
   onQuery: (value: string) => void;
   onFilm: (movie: Movie) => void;
   onProfile: (profile: PublicProfile) => void;
@@ -73,7 +75,8 @@ export function SearchView({
     <div className="page content-wrap search-page">
       <div className="search-stage">
         <div className="search-title-block">
-          <h1>Find your next film.</h1>
+          <h1>{filterLabel ? `More from ${filterLabel}.` : "Find your next film."}</h1>
+          {filterLabel ? <p>Following a thread from the film page. Type anything to start a new search.</p> : null}
         </div>
 
         <section className="unified-search" aria-label="Search movies and people">

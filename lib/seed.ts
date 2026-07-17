@@ -127,6 +127,8 @@ export const initialState: AppState = {
   diary: [],
   ranked: [],
   watchlist: [],
+  likedMovieIds: [],
+  favorites: [],
   movieCache: [...movies],
   comparisons: [],
   rankHistory: [],

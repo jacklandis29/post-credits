@@ -53,12 +53,22 @@ async function tmdbFetch(url: URL, attempt = 0): Promise<Response> {
 }
 
 export async function GET(request: Request) {
-  const query = new URL(request.url).searchParams.get("q")?.trim() ?? "";
-  if (query.length < 2 || query.length > 120) {
+  const requestUrl = new URL(request.url);
+  const query = requestUrl.searchParams.get("q")?.trim() ?? "";
+  const filterType = requestUrl.searchParams.get("type") ?? "";
+  const filterId = requestUrl.searchParams.get("id") ?? "";
+  const filterParam = {
+    director: "with_crew",
+    cast: "with_cast",
+    genre: "with_genres",
+    keyword: "with_keywords",
+  }[filterType];
+  const filtered = Boolean(filterParam && /^\d{1,12}$/.test(filterId) && Number(filterId) > 0);
+  if ((!filtered && query.length < 2) || query.length > 120) {
     return response({ results: [] }, query.length > 120 ? 400 : 200);
   }
   const release = beginTmdbRequest(
-    `search:${tmdbRequestIdentity(request)}`,
+    `search:${filterType}:${filterId}:${tmdbRequestIdentity(request)}`,
     { limit: 30 },
   );
   if (!release) {
@@ -70,8 +80,13 @@ export async function GET(request: Request) {
   }
 
   try {
-    const url = new URL(`${TMDB_ORIGIN}/search/movie`);
-    url.searchParams.set("query", query);
+    const url = new URL(`${TMDB_ORIGIN}/${filtered ? "discover/movie" : "search/movie"}`);
+    if (filtered && filterParam) {
+      url.searchParams.set(filterParam, filterId);
+      url.searchParams.set("sort_by", "popularity.desc");
+    } else {
+      url.searchParams.set("query", query);
+    }
     url.searchParams.set("include_adult", "false");
     url.searchParams.set("language", "en-US");
     url.searchParams.set("page", "1");

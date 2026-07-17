@@ -72,6 +72,18 @@ function validMovie(value: unknown): boolean {
     optional(movie.releaseDate, string) &&
     optional(movie.cast, stringArray) &&
     optional(movie.keywords, stringArray) &&
+    optional(movie.directors, (candidate) => Array.isArray(candidate) && candidate.every((item) => {
+      const person = record(item);
+      return Boolean(person && integer(person.id, 1) && string(person.name));
+    })) &&
+    optional(movie.genreDetails, (candidate) => Array.isArray(candidate) && candidate.every((item) => {
+      const genre = record(item);
+      return Boolean(genre && integer(genre.id, 1) && string(genre.name));
+    })) &&
+    optional(movie.keywordDetails, (candidate) => Array.isArray(candidate) && candidate.every((item) => {
+      const keyword = record(item);
+      return Boolean(keyword && integer(keyword.id, 1) && string(keyword.name));
+    })) &&
     optional(movie.originalLanguage, (candidate) => nullable(candidate, string)) &&
     optional(movie.productionCountries, stringArray) &&
     optional(movie.tagline, (candidate) => nullable(candidate, string)) &&
@@ -81,6 +93,7 @@ function validMovie(value: unknown): boolean {
       const credit = record(item);
       return Boolean(
         credit &&
+        optional(credit.id, (candidate) => integer(candidate, 1)) &&
         string(credit.name) &&
         nullable(credit.character, string) &&
         nullable(credit.profile, string),
@@ -97,6 +110,8 @@ function validDiaryEntry(value: unknown): boolean {
     integer(entry.movieId, 1) &&
     string(entry.watchedOn) &&
     string(entry.note) &&
+    optional(entry.containsSpoilers, (candidate) => typeof candidate === "boolean") &&
+    optional(entry.tags, stringArray) &&
     enumValue(entry.visibility, noteVisibilities) &&
     enumValue(entry.completionStatus, completionStatuses) &&
     enumValue(entry.rankingStatus, rankingStatuses) &&
@@ -122,6 +137,13 @@ function validRankedFilm(value: unknown): boolean {
 function validWatchlistItem(value: unknown): boolean {
   const item = record(value);
   return Boolean(item && integer(item.movieId, 1) && string(item.addedAt));
+}
+
+function validFavorite(value: unknown): boolean {
+  const item = record(value);
+  return Boolean(
+    item && integer(item.movieId, 1) && integer(item.position, 1) && item.position <= 4 && string(item.addedAt),
+  );
 }
 
 function validComparison(value: unknown): boolean {
@@ -225,6 +247,8 @@ function validAppState(value: unknown): value is AppState {
     validArray(state.diary, validDiaryEntry) &&
     validArray(state.ranked, validRankedFilm) &&
     validArray(state.watchlist, validWatchlistItem) &&
+    optional(state.likedMovieIds, (candidate) => Array.isArray(candidate) && candidate.every((item) => integer(item, 1))) &&
+    optional(state.favorites, (candidate) => validArray(candidate, validFavorite)) &&
     optional(state.movieCache, (candidate) => validArray(candidate, validMovie)) &&
     optional(state.comparisons, (candidate) => validArray(candidate, validComparison)) &&
     optional(state.rankHistory, (candidate) => validArray(candidate, validRankHistory)) &&
@@ -246,6 +270,8 @@ function compactMovies(state: AppState): Movie[] {
     ...state.diary.map((entry) => entry.movieId),
     ...state.ranked.map((film) => film.movieId),
     ...state.watchlist.map((item) => item.movieId),
+    ...(state.likedMovieIds ?? []),
+    ...(state.favorites ?? []).map((item) => item.movieId),
   ]);
   const cache = state.movieCache ?? [];
   const required = cache.filter((movie) => referenced.has(movie.id));

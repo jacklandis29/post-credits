@@ -3,6 +3,7 @@
 import { movieById } from "@/lib/seed";
 import type { AppState, DiaryEntry, Movie } from "@/lib/types";
 import { filmStyle, monthTitle, prettyDate, type CanonRow } from "@/lib/ui";
+import { useMemo, useState } from "react";
 import { PosterArt, VerdictMark } from "./media";
 
 export function DiaryView({
@@ -18,6 +19,12 @@ export function DiaryView({
   onFilm: (movie: Movie) => void;
   onLog: () => void;
 }) {
+  const [tag, setTag] = useState("all");
+  const tags = useMemo(() => [...new Set(state.diary.flatMap((entry) => entry.tags ?? []))].sort(), [state.diary]);
+  const visibleGroups = useMemo(() => groups
+    .map(([month, entries]) => [month, tag === "all" ? entries : entries.filter((entry) => entry.tags?.includes(tag))] as [string, DiaryEntry[]])
+    .filter(([, entries]) => entries.length), [groups, tag]);
+
   return (
     <div className="page content-wrap diary-page">
       <div className="page-heading">
@@ -27,7 +34,16 @@ export function DiaryView({
         </div>
         <button className="primary-action" onClick={onLog}>Log a film</button>
       </div>
-      {groups.map(([month, entries]) => (
+      {tags.length ? (
+        <label className="diary-tag-filter">
+          <span>Tag</span>
+          <select value={tag} onChange={(event) => setTag(event.target.value)}>
+            <option value="all">All tags</option>
+            {tags.map((item) => <option value={item} key={item}>#{item}</option>)}
+          </select>
+        </label>
+      ) : null}
+      {visibleGroups.map(([month, entries]) => (
         <section className="diary-month" key={month}>
           <div className="month-heading"><h2>{monthTitle(month)}</h2><span>{entries.length} {entries.length === 1 ? "entry" : "entries"}</span></div>
           <div className="poster-wall">
@@ -41,6 +57,8 @@ export function DiaryView({
                     <span>{prettyDate(entry.watchedOn, { month: "short", day: "numeric" })}</span>
                     <strong>{movie.title}</strong>
                     {entry.completionStatus === "dnf" ? <small>Did not finish</small> : row ? <VerdictMark verdict={row.ranked.verdict} /> : <small>Ranking unfinished</small>}
+                    {entry.tags?.length ? <small className="diary-tags">{entry.tags.map((item) => `#${item}`).join(" · ")}</small> : null}
+                    {(state.likedMovieIds ?? []).includes(movie.id) ? <span className="diary-heart" aria-label="Liked">♥</span> : null}
                   </span>
                 </button>
               );

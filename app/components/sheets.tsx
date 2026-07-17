@@ -24,6 +24,7 @@ export function PublicProfileSheet({
   const canon = canonFromState(data.state);
   const diary = sortDiary(data.state.diary);
   const featured = canon[0]?.movie ?? (diary[0] ? movieById(diary[0].movieId) : movies[0]);
+  const favorites = (data.state.favorites ?? []).slice().sort((left, right) => left.position - right.position);
   const [shareStatus, setShareStatus] = useState("");
 
   async function share() {
@@ -40,7 +41,7 @@ export function PublicProfileSheet({
           {featured.backdrop ? <img className="public-profile-backdrop" src={featured.backdrop} alt="" /> : null}
           <div className="public-profile-hero-shade" />
           <div className="public-profile-heading-inner content-wrap">
-            <div className="profile-avatar large">{(data.profile.displayName || data.profile.username).slice(0, 1).toUpperCase()}</div>
+            <div className="profile-avatar large">{data.profile.avatarUrl ? <img src={data.profile.avatarUrl} alt="" /> : (data.profile.displayName || data.profile.username).slice(0, 1).toUpperCase()}</div>
             <div className="public-profile-copy">
               <h1>{data.profile.displayName}</h1>
               <span>@{data.profile.username}</span>
@@ -50,10 +51,21 @@ export function PublicProfileSheet({
             <dl><div><dt>Ranked</dt><dd>{canon.length}</dd></div><div><dt>Watches</dt><dd>{diary.length}</dd></div><div><dt>Rewatches</dt><dd>{diary.filter((entry) => entry.isRewatch).length}</dd></div></dl>
           </div>
         </header>
+        {favorites.length ? (
+          <section className="public-profile-section content-wrap">
+            <div className="section-heading"><h2>Their four</h2><span className="section-note">Hand-picked favorites</span></div>
+            <div className="profile-favorites-grid">
+              {favorites.map((favorite) => {
+                const movie = movieById(favorite.movieId);
+                return <button key={movie.id} onClick={() => onFilm(movie)}><PosterArt movie={movie} /><span><strong>{movie.title}</strong><small>{movie.year}</small></span></button>;
+              })}
+            </div>
+          </section>
+        ) : null}
         <section className="public-profile-section content-wrap">
           <div className="section-heading"><h2>Their top films</h2><span className="section-note">Scores are relative to this person&rsquo;s own ranking</span></div>
           <div className="public-profile-canon">
-            {canon.slice(0, 10).map((row) => (
+            {canon.map((row) => (
               <button key={row.movie.id} onClick={() => onFilm(row.movie)} style={filmStyle(row.movie)}>
                 <span>{row.rank}</span>
                 <PosterArt movie={row.movie} />
@@ -65,14 +77,14 @@ export function PublicProfileSheet({
           {canon.length === 0 ? <p className="quiet-copy">No ranked films yet.</p> : null}
         </section>
         <section className="public-profile-section content-wrap">
-          <div className="section-heading"><h2>Latest watches</h2></div>
-          <div className="poster-rail">
-            {diary.slice(0, 6).map((entry) => {
+          <div className="section-heading"><h2>Full diary</h2><span className="section-note">Every public watch and note</span></div>
+          <div className="public-profile-diary">
+            {diary.map((entry) => {
               const movie = movieById(entry.movieId);
               return (
-                <button className="poster-card" key={entry.id} onClick={() => onFilm(movie)}>
+                <button key={entry.id} onClick={() => onFilm(movie)}>
                   <PosterArt movie={movie} />
-                  <span className="poster-card-copy"><strong>{movie.title}</strong><small>{prettyDate(entry.watchedOn)}</small></span>
+                  <span><strong>{movie.title}</strong><small>{prettyDate(entry.watchedOn)}{entry.isRewatch ? " · Rewatch" : ""}</small>{entry.note ? <q>{entry.note}</q> : null}</span>
                 </button>
               );
             })}
@@ -103,6 +115,8 @@ export function ProfileSheet({
     isPublic: boolean;
     isDiscoverable: boolean;
     defaultNoteVisibility: "private" | "public";
+    avatarFile: File | null;
+    removeAvatar: boolean;
   }) => void;
   onSignOut: () => void;
   onSignOutEverywhere: () => void;
@@ -114,6 +128,9 @@ export function ProfileSheet({
   const [isPublic, setIsPublic] = useState(profile.isPublic);
   const [isDiscoverable, setIsDiscoverable] = useState(profile.isDiscoverable);
   const [defaultNoteVisibility, setDefaultNoteVisibility] = useState(profile.defaultNoteVisibility);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState(profile.avatarUrl);
+  const [removeAvatar, setRemoveAvatar] = useState(false);
   const [confirmGlobalSignOut, setConfirmGlobalSignOut] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
@@ -121,18 +138,31 @@ export function ProfileSheet({
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!displayName.trim()) return;
-    onSave({ displayName, bio, isPublic, isDiscoverable, defaultNoteVisibility });
+    onSave({ displayName, bio, isPublic, isDiscoverable, defaultNoteVisibility, avatarFile, removeAvatar });
   }
 
   return (
     <div className="profile-overlay" role="dialog" aria-modal="true" aria-label="Profile and settings">
       <section className="profile-sheet">
         <div className="profile-sheet-heading">
-          <div className="profile-avatar">{(displayName || profile.username).slice(0, 1).toUpperCase()}</div>
+          <div className="profile-avatar">{avatarPreview ? <img src={avatarPreview} alt="" /> : (displayName || profile.username).slice(0, 1).toUpperCase()}</div>
           <div><p>Edit profile</p><h1>@{profile.username}</h1></div>
           <button className="sheet-close inline" onClick={onClose} aria-label="Close profile settings">×</button>
         </div>
         <form className="profile-form" onSubmit={submit}>
+          <div className="avatar-field">
+            <div><strong>Profile picture</strong><small>JPG, PNG, or WebP · up to 5 MB</small></div>
+            <div>
+              <label className="secondary-action avatar-upload">Choose image<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {
+                const file = event.target.files?.[0] ?? null;
+                if (!file) return;
+                setAvatarFile(file);
+                setRemoveAvatar(false);
+                setAvatarPreview(URL.createObjectURL(file));
+              }} /></label>
+              {avatarPreview ? <button className="text-action muted" type="button" onClick={() => { setAvatarFile(null); setAvatarPreview(null); setRemoveAvatar(true); }}>Remove</button> : null}
+            </div>
+          </div>
           <label className="profile-field"><span>Display name</span><input value={displayName} maxLength={80} onChange={(event) => setDisplayName(event.target.value)} required /></label>
           <label className="profile-field"><span>Bio <small>{bio.length}/300</small></span><textarea value={bio} maxLength={300} onChange={(event) => setBio(event.target.value)} placeholder="A line about your taste in film" /></label>
           <fieldset className="profile-privacy">

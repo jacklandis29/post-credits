@@ -22,9 +22,12 @@ import {
   recordRankingAnswer,
   resumeRankingRecord,
   searchPublicProfiles,
+  setFavoriteFilm,
+  setFilmLike,
   setWatchlistItem,
   undoRankingAnswer,
   updateProfile,
+  uploadProfileAvatar,
   type PublicProfile,
   type PublicProfileState,
 } from "@/lib/supabase/data";
@@ -67,6 +70,19 @@ const SIDEBAR_KEY = "after-credits-sidebar-collapsed";
 const IMPORT_PROGRESS_KEY = "post-credits-import-progress-v1";
 
 const views: View[] = ["home", "diary", "canon", "watchlist", "search", "profile"];
+
+export type DiscoveryFilter = {
+  type: "director" | "cast" | "genre" | "keyword";
+  id: number;
+  label: string;
+};
+
+function normalizeTags(value: string): string[] {
+  return [...new Set(value
+    .split(",")
+    .map((tag) => tag.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, ""))
+    .filter(Boolean))].slice(0, 10);
+}
 
 function viewFromLocation(): View {
   const candidate = new URLSearchParams(window.location.search).get("view");
@@ -154,6 +170,7 @@ function AfterCreditsCore({
   const [canonQuery, setCanonQuery] = useState("");
   const [canonVerdict, setCanonVerdict] = useState<"all" | Verdict>("all");
   const [discoveryQuery, setDiscoveryQuery] = useState("");
+  const [discoveryFilter, setDiscoveryFilter] = useState<DiscoveryFilter | null>(null);
   const [discoveryMovies, setDiscoveryMovies] = useState<{
     query: string;
     results: Movie[];
@@ -557,7 +574,10 @@ function AfterCreditsCore({
       setDiscoveryMovieBusy(true);
       setDiscoveryMovies({ query: query.toLowerCase(), results: [], error: "" });
       try {
-        const response = await fetch(`/api/tmdb/search?q=${encodeURIComponent(query)}`, {
+        const filterParams = discoveryFilter
+          ? `&type=${encodeURIComponent(discoveryFilter.type)}&id=${discoveryFilter.id}`
+          : "";
+        const response = await fetch(`/api/tmdb/search?q=${encodeURIComponent(query)}${filterParams}`, {
           signal: controller.signal,
         });
         const payload = (await response.json()) as { results?: Movie[]; error?: string };
@@ -576,7 +596,7 @@ function AfterCreditsCore({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [discoveryQuery, quickSearchOpen, view]);
+  }, [discoveryFilter, discoveryQuery, quickSearchOpen, view]);
 
   const diary = useMemo(() => sortDiary(state.diary), [state.diary]);
   const canon = useMemo(() => canonFromState(state), [state]);
@@ -637,12 +657,24 @@ function AfterCreditsCore({
     isPublic: boolean;
     isDiscoverable: boolean;
     defaultNoteVisibility: "private" | "public";
+    avatarFile: File | null;
+    removeAvatar: boolean;
   }) {
     if (!connection) return;
     runConnected(async () => {
+      const avatarUrl = input.avatarFile
+        ? await uploadProfileAvatar(connection.client, connection.userId, input.avatarFile)
+        : input.removeAvatar
+          ? null
+          : activeProfile?.avatarUrl ?? null;
       const profile = await updateProfile(connection.client, {
         userId: connection.userId,
-        ...input,
+        displayName: input.displayName,
+        bio: input.bio,
+        isPublic: input.isPublic,
+        isDiscoverable: input.isDiscoverable,
+        defaultNoteVisibility: input.defaultNoteVisibility,
+        avatarUrl,
       });
       setActiveProfile(profile);
       setProfileOpen(false);
@@ -698,6 +730,8 @@ function AfterCreditsCore({
             watchedOn: entry.watchedOn,
             note: entry.note,
             visibility: entry.visibility,
+            containsSpoilers: Boolean(entry.containsSpoilers),
+            tags: entry.tags ?? [],
             dnf: entry.completionStatus === "dnf",
             importKey: entry.id,
           });
@@ -715,6 +749,20 @@ function AfterCreditsCore({
           userId: connection.userId,
           movie: movieFor(item.movieId),
           shouldAdd: true,
+        });
+      }
+      for (const movieId of importOffer.likedMovieIds ?? []) {
+        await setFilmLike(connection.client, {
+          userId: connection.userId,
+          movie: movieFor(movieId),
+          shouldLike: true,
+        });
+      }
+      for (const favorite of importOffer.favorites ?? []) {
+        await setFavoriteFilm(connection.client, {
+          userId: connection.userId,
+          movie: movieFor(favorite.movieId),
+          position: favorite.position,
         });
       }
       await refreshConnectedState();
@@ -800,6 +848,8 @@ function AfterCreditsCore({
       entryId: entry?.id ?? null,
       watchedOn: entry?.watchedOn ?? todayLocal(),
       note: entry?.note ?? "",
+      containsSpoilers: Boolean(entry?.containsSpoilers),
+      tags: (entry?.tags ?? []).join(", "),
       visibility: entry?.visibility ?? "private",
       step:
         session.status === "complete" ||
@@ -902,6 +952,8 @@ function AfterCreditsCore({
         entryId: entry.id,
         watchedOn: entry.watchedOn,
         note: entry.note,
+        containsSpoilers: Boolean(entry.containsSpoilers),
+        tags: (entry.tags ?? []).join(", "),
         visibility: entry.visibility,
         step: "verdict",
       });
@@ -929,6 +981,8 @@ function AfterCreditsCore({
       entryId: entry.id,
       watchedOn: entry.watchedOn,
       note: entry.note,
+      containsSpoilers: Boolean(entry.containsSpoilers),
+      tags: (entry.tags ?? []).join(", "),
       visibility: entry.visibility,
       step:
         session.status === "complete"
@@ -965,6 +1019,8 @@ function AfterCreditsCore({
           watchedOn: draft.watchedOn,
           note: draft.note,
           visibility: draft.visibility,
+          containsSpoilers: draft.containsSpoilers,
+          tags: normalizeTags(draft.tags),
           dnf,
         });
         await refreshConnectedState();
@@ -996,6 +1052,8 @@ function AfterCreditsCore({
       movieId: log.movie.id,
       watchedOn: log.watchedOn,
       note: log.note.trim(),
+      containsSpoilers: log.containsSpoilers,
+      tags: normalizeTags(log.tags),
       visibility: log.visibility,
       completionStatus: dnf ? "dnf" : "completed",
       rankingStatus: dnf
@@ -1575,6 +1633,78 @@ function AfterCreditsCore({
     writeAuthoritativeState(applyOptimisticState(readAuthoritativeState(), shouldAdd));
   }
 
+  function toggleLike(movie: Movie) {
+    if (requireSignIn()) return;
+    const shouldLike = !(state.likedMovieIds ?? []).includes(movie.id);
+    const apply = (current: AppState, liked: boolean): AppState => ({
+      ...current,
+      likedMovieIds: liked
+        ? [...new Set([...(current.likedMovieIds ?? []), movie.id])]
+        : (current.likedMovieIds ?? []).filter((id) => id !== movie.id),
+    });
+    if (connection) setState((current) => apply(current, shouldLike));
+    if (connection) {
+      runConnected(async () => {
+        try {
+          await setFilmLike(connection.client, { userId: connection.userId, movie, shouldLike });
+          await refreshConnectedState();
+        } catch (error) {
+          setState((current) => apply(current, !shouldLike));
+          throw error;
+        }
+      });
+      return;
+    }
+    writeAuthoritativeState(apply(readAuthoritativeState(), shouldLike));
+  }
+
+  function toggleFavorite(movie: Movie) {
+    if (requireSignIn()) return;
+    const currentFavorites = state.favorites ?? [];
+    const existing = currentFavorites.find((item) => item.movieId === movie.id);
+    if (!existing && currentFavorites.length >= 4) {
+      setOperationError("Your favorites are full. Remove one before adding another.");
+      return;
+    }
+    const position = existing
+      ? null
+      : [1, 2, 3, 4].find((candidate) => !currentFavorites.some((item) => item.position === candidate)) ?? null;
+    const apply = (current: AppState, nextPosition: number | null): AppState => ({
+      ...current,
+      favorites: nextPosition === null
+        ? (current.favorites ?? []).filter((item) => item.movieId !== movie.id)
+        : [...(current.favorites ?? []).filter((item) => item.movieId !== movie.id), {
+            movieId: movie.id,
+            position: nextPosition,
+            addedAt: new Date().toISOString(),
+          }].sort((left, right) => left.position - right.position),
+    });
+    if (connection) setState((current) => apply(current, position));
+    if (connection) {
+      runConnected(async () => {
+        try {
+          await setFavoriteFilm(connection.client, { userId: connection.userId, movie, position });
+          await refreshConnectedState();
+        } catch (error) {
+          setState((current) => apply(current, existing?.position ?? null));
+          throw error;
+        }
+      });
+      return;
+    }
+    writeAuthoritativeState(apply(readAuthoritativeState(), position));
+  }
+
+  function openDiscovery(filter: DiscoveryFilter) {
+    removeFilmFromLocation();
+    setSelectedFilm(null);
+    setDiscoveryFilter(filter);
+    setDiscoveryQuery(filter.label);
+    if (viewFromLocation() !== "search") window.history.pushState(null, "", urlForView("search"));
+    setView("search");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   function openView(next: View) {
     setQuickSearchOpen(false);
     setSelectedFilm(null);
@@ -1718,8 +1848,10 @@ function AfterCreditsCore({
                 title={connection && activeProfile ? `@${activeProfile.username}` : "Local device"}
                 onClick={() => setAccountMenuOpen((open) => !open)}
               >
-                <span className="icon-button" aria-hidden="true">
-                  {connection && activeProfile
+                <span className="icon-button" aria-hidden="true" style={activeProfile?.avatarUrl ? { backgroundImage: `url(${activeProfile.avatarUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}>
+                  {connection && activeProfile?.avatarUrl
+                    ? ""
+                    : connection && activeProfile
                     ? (activeProfile.displayName || activeProfile.username)
                         .split(/\s+/)
                         .slice(0, 2)
@@ -1750,7 +1882,7 @@ function AfterCreditsCore({
       </header>
 
       {view !== "search" && !quickSearchOpen ? (
-        <button className="global-search-button" type="button" onClick={() => { setDiscoveryQuery(""); setQuickSearchOpen(true); }} aria-label="Quick search" title="Search">
+        <button className="global-search-button" type="button" onClick={() => { setDiscoveryFilter(null); setDiscoveryQuery(""); setQuickSearchOpen(true); }} aria-label="Quick search" title="Search">
           <SearchIcon />
         </button>
       ) : null}
@@ -1764,7 +1896,7 @@ function AfterCreditsCore({
           profileBusy={peopleSearchPending}
           movieError={discoveryMovies.query === discoveryQuery.trim().toLowerCase() ? discoveryMovies.error : ""}
           profilesAvailable={profilesAvailable}
-          onQuery={setDiscoveryQuery}
+          onQuery={(value) => { setDiscoveryFilter(null); setDiscoveryQuery(value); }}
           onFilm={openDiscoveredFilm}
           onProfile={(profile) => { setQuickSearchOpen(false); openPublicProfile(profile); }}
           onClose={() => setQuickSearchOpen(false)}
@@ -1849,7 +1981,8 @@ function AfterCreditsCore({
             profileBusy={peopleSearchPending}
             movieError={discoveryMovies.query === discoveryQuery.trim().toLowerCase() ? discoveryMovies.error : ""}
             profilesAvailable={profilesAvailable}
-            onQuery={setDiscoveryQuery}
+            filterLabel={discoveryFilter?.label}
+            onQuery={(value) => { setDiscoveryFilter(null); setDiscoveryQuery(value); }}
             onFilm={openDiscoveredFilm}
             onProfile={openPublicProfile}
           />
@@ -1893,6 +2026,11 @@ function AfterCreditsCore({
           onLog={() => openMovieLogger(selectedFilm)}
           onRerank={() => startManualRerank(selectedFilm)}
           onWatchlist={() => toggleWatchlist(selectedFilm.id)}
+          onLike={() => toggleLike(selectedFilm)}
+          onFavorite={() => toggleFavorite(selectedFilm)}
+          onDiscover={openDiscovery}
+          onOpenFilm={openFilm}
+          readOnly={publicMode}
         />
       ) : null}
 
