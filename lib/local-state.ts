@@ -46,6 +46,7 @@ const noteVisibilities = new Set(["inherit", "private", "public"]);
 const completionStatuses = new Set(["completed", "dnf"]);
 const rankingStatuses = new Set(["pending", "in_progress", "complete", "not_applicable"]);
 const placementConfidences = new Set(["exact", "provisional"]);
+const reviewVisibilities = new Set(["private", "public"]);
 
 function enumValue(value: unknown, values: Set<string>): value is string {
   return string(value) && values.has(value);
@@ -102,6 +103,16 @@ function validDiaryEntry(value: unknown): boolean {
     enumValue(entry.rankingStatus, rankingStatuses) &&
     typeof entry.isRewatch === "boolean" &&
     string(entry.createdAt),
+  );
+}
+
+function validReview(value: unknown): boolean {
+  const review = record(value);
+  return Boolean(
+    review && string(review.id) && integer(review.movieId, 1) &&
+    string(review.body) && review.body.length <= 50_000 &&
+    enumValue(review.visibility, reviewVisibilities) &&
+    string(review.createdAt) && string(review.updatedAt),
   );
 }
 
@@ -223,6 +234,7 @@ function validAppState(value: unknown): value is AppState {
   if (!state) return false;
   return (
     validArray(state.diary, validDiaryEntry) &&
+    optional(state.reviews, (candidate) => validArray(candidate, validReview)) &&
     validArray(state.ranked, validRankedFilm) &&
     validArray(state.watchlist, validWatchlistItem) &&
     optional(state.movieCache, (candidate) => validArray(candidate, validMovie)) &&
@@ -244,6 +256,7 @@ function validAppState(value: unknown): value is AppState {
 function compactMovies(state: AppState): Movie[] {
   const referenced = new Set([
     ...state.diary.map((entry) => entry.movieId),
+    ...(state.reviews ?? []).map((review) => review.movieId),
     ...state.ranked.map((film) => film.movieId),
     ...state.watchlist.map((item) => item.movieId),
   ]);
@@ -282,9 +295,9 @@ export function parseLocalState(value: string): AppState | null {
       parsedRecord.version !== LOCAL_STATE_VERSION ||
       !validAppState(parsedRecord.state)
     ) return null;
-    return compactLocalState(parsedRecord.state);
+    return compactLocalState({ ...parsedRecord.state, reviews: parsedRecord.state.reviews ?? [] } as AppState);
   }
-  if (validAppState(parsed)) return compactLocalState(parsed);
+  if (validAppState(parsed)) return compactLocalState({ ...parsed, reviews: parsed.reviews ?? [] } as AppState);
   return null;
 }
 

@@ -13,6 +13,7 @@ import {
 import { cacheMovies, initialState, movieById, movies } from "@/lib/seed";
 import { movieSimilarity } from "@/lib/similarity";
 import { parseLocalState, safelyWriteLocalState, serializeLocalState } from "@/lib/local-state";
+import { exportUserData } from "@/lib/export";
 import {
   beginRankingRecord,
   commitRankingRecord,
@@ -21,6 +22,7 @@ import {
   loadPublicProfileState,
   recordRankingAnswer,
   resumeRankingRecord,
+  saveReviewRecord,
   searchPublicProfiles,
   setWatchlistItem,
   undoRankingAnswer,
@@ -48,6 +50,7 @@ import { CanonView } from "./components/CanonView";
 import { DiaryView } from "./components/DiaryView";
 import { FilmDetail } from "./components/FilmDetail";
 import { HomeView } from "./components/HomeView";
+import { InsightsView } from "./components/InsightsView";
 import { Landing } from "./components/Landing";
 import {
   emptyDraft,
@@ -66,7 +69,7 @@ const PENDING_LOG_KEY = "after-credits-pending-log-v1";
 const SIDEBAR_KEY = "after-credits-sidebar-collapsed";
 const IMPORT_PROGRESS_KEY = "post-credits-import-progress-v1";
 
-const views: View[] = ["home", "diary", "canon", "watchlist", "search", "profile"];
+const views: View[] = ["home", "diary", "canon", "stats", "watchlist", "search", "profile"];
 
 function viewFromLocation(): View {
   const candidate = new URLSearchParams(window.location.search).get("view");
@@ -104,6 +107,7 @@ const viewLabels: Record<View, string> = {
   home: "Home",
   diary: "Diary",
   canon: "Ranking",
+  stats: "Stats",
   watchlist: "Watchlist",
   search: "Search",
   profile: "Profile",
@@ -167,6 +171,7 @@ function AfterCreditsCore({
   }>({ query: "", results: [] });
   const [peopleBusy, setPeopleBusy] = useState(false);
   const [selectedPublicProfile, setSelectedPublicProfile] = useState<PublicProfileState | null>(null);
+  const [publicFilmContext, setPublicFilmContext] = useState<PublicProfileState | null>(null);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [quickSearchOpen, setQuickSearchOpen] = useState(false);
@@ -404,12 +409,16 @@ function AfterCreditsCore({
       else if (selectedFilm) {
         removeFilmFromLocation();
         setSelectedFilm(null);
+        if (publicFilmContext) {
+          setSelectedPublicProfile(publicFilmContext);
+          setPublicFilmContext(null);
+        }
       }
       else if (quickSearchOpen) setQuickSearchOpen(false);
     }
     window.addEventListener("keydown", closeTopLayer);
     return () => window.removeEventListener("keydown", closeTopLayer);
-  }, [aboutOpen, accountMenuOpen, importBusy, importOffer, log, profileOpen, quickSearchOpen, selectedFilm, selectedPublicProfile]);
+  }, [aboutOpen, accountMenuOpen, importBusy, importOffer, log, profileOpen, publicFilmContext, quickSearchOpen, selectedFilm, selectedPublicProfile]);
 
   const hasAboutLayer = aboutOpen;
   const hasProfileLayer = profileOpen;
@@ -1575,6 +1584,25 @@ function AfterCreditsCore({
     writeAuthoritativeState(applyOptimisticState(readAuthoritativeState(), shouldAdd));
   }
 
+  function saveReview(movie: Movie, body: string, visibility: "private" | "public") {
+    if (requireSignIn()) return;
+    const normalized = body.trim();
+    if (connection) {
+      runConnected(async () => {
+        await saveReviewRecord(connection.client, { userId: connection.userId, movie, body: normalized, visibility });
+        await refreshConnectedState();
+      });
+      return;
+    }
+    const now = new Date().toISOString();
+    const current = readAuthoritativeState();
+    const existing = current.reviews.find((review) => review.movieId === movie.id);
+    writeAuthoritativeState({ ...current, reviews: normalized ? [
+      ...current.reviews.filter((review) => review.movieId !== movie.id),
+      { id: existing?.id ?? `local-review-${movie.id}`, movieId: movie.id, body: normalized, visibility, createdAt: existing?.createdAt ?? now, updatedAt: now },
+    ] : current.reviews.filter((review) => review.movieId !== movie.id) });
+  }
+
   function openView(next: View) {
     setQuickSearchOpen(false);
     setSelectedFilm(null);
@@ -1616,7 +1644,21 @@ function AfterCreditsCore({
     setSelectedFilm(movie);
   }
 
+  function openPublicProfileFilm(movie: Movie) {
+    const context = selectedPublicProfile;
+    setSelectedPublicProfile(null);
+    openFilm(movie);
+    setPublicFilmContext(context);
+  }
+
   function closeFilm() {
+    if (publicFilmContext) {
+      removeFilmFromLocation();
+      setSelectedFilm(null);
+      setSelectedPublicProfile(publicFilmContext);
+      setPublicFilmContext(null);
+      return;
+    }
     if (filmIdFromLocation() && window.history.state?.afterCreditsFilm) {
       window.history.back();
       return;
@@ -1651,6 +1693,8 @@ function AfterCreditsCore({
   const peopleSearchPending = discoveryReady && profilesAvailable && (
     peopleBusy || peopleSearch.query !== normalizedDiscoveryQuery
   );
+  const selectedFilmState = publicFilmContext?.state ?? state;
+  const selectedFilmCanon = publicFilmContext ? canonFromState(publicFilmContext.state) : canon;
 
   return (
     <div className={`app-shell${publicMode ? " public-shell" : ""}${sidebarCollapsed ? " sidebar-collapsed" : ""}${sidebarTransitioning ? " sidebar-transitioning" : ""}`} aria-busy={operationBusy}>
@@ -1665,7 +1709,7 @@ function AfterCreditsCore({
           </button>
         </div>
         <nav className="desktop-nav" aria-label="Primary navigation">
-          {(["home", "diary", "canon", "watchlist", "search"] as View[]).map((item) => (
+          {(["home", "diary", "canon", "stats", "watchlist", "search"] as View[]).map((item) => (
             <button
               key={item}
               className={view === item ? "active" : ""}
@@ -1831,6 +1875,8 @@ function AfterCreditsCore({
           />
         ) : null}
 
+        {view === "stats" ? <InsightsView state={state} canon={canon} onFilm={openFilm} /> : null}
+
         {view === "watchlist" ? (
           <WatchlistView
             items={state.watchlist}
@@ -1865,12 +1911,14 @@ function AfterCreditsCore({
             onFilm={openFilm}
             onSettings={() => connection ? setProfileOpen(true) : undefined}
             onSignIn={() => onSignIn?.()}
+            onStats={() => openView("stats")}
+            onExport={(format) => exportUserData(activeProfile, state, format)}
           />
         ) : null}
       </main>
 
       <nav className="mobile-nav" aria-label="Mobile navigation">
-        {(["home", "diary", "canon", "watchlist", "profile"] as View[]).map((item) => (
+        {(["home", "diary", "canon", "stats", "watchlist", "profile"] as View[]).map((item) => (
           <button
             key={item}
             className={view === item ? "active" : ""}
@@ -1887,12 +1935,15 @@ function AfterCreditsCore({
         <FilmDetail
           key={selectedFilm.id}
           movie={selectedFilm}
-          state={state}
-          canon={canon}
+          state={selectedFilmState}
+          canon={selectedFilmCanon}
           onClose={closeFilm}
           onLog={() => openMovieLogger(selectedFilm)}
           onRerank={() => startManualRerank(selectedFilm)}
           onWatchlist={() => toggleWatchlist(selectedFilm.id)}
+          onSaveReview={saveReview}
+          readOnly={publicMode || Boolean(publicFilmContext)}
+          profileLabel={publicFilmContext?.profile.displayName}
         />
       ) : null}
 
@@ -1929,7 +1980,7 @@ function AfterCreditsCore({
         />
       ) : null}
       {selectedPublicProfile ? (
-        <PublicProfileSheet data={selectedPublicProfile} onClose={() => setSelectedPublicProfile(null)} onFilm={(movie) => { setSelectedPublicProfile(null); openFilm(movie); }} />
+        <PublicProfileSheet data={selectedPublicProfile} onClose={() => setSelectedPublicProfile(null)} onFilm={openPublicProfileFilm} />
       ) : null}
       {profileOpen && connection && activeProfile ? (
         <ProfileSheet

@@ -45,7 +45,8 @@ test("server-renders the finished Post Credits product", async () => {
   );
   assert.match(appSource, /Diary/);
   assert.match(appSource, /onLog=\{openLogger\}/);
-  assert.match(appSource, /\["home", "diary", "canon", "watchlist", "profile"\]/);
+  assert.match(appSource, /\["home", "diary", "canon", "stats", "watchlist", "profile"\]/);
+  assert.match(appSource, /InsightsView/);
   assert.doesNotMatch(appSource, /className="mobile-log"/);
   assert.match(logFlowSource, /Did not finish/);
   assert.match(logFlowSource, /dnf-action" disabled=\{!isValidLocalDate/);

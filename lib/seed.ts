@@ -125,6 +125,7 @@ export const movies: Movie[] = [
 
 export const initialState: AppState = {
   diary: [],
+  reviews: [],
   ranked: [],
   watchlist: [],
   movieCache: [...movies],

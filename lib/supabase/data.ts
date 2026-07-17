@@ -14,6 +14,7 @@ import type {
   Movie,
   RankedFilm,
   RankHistoryRecord,
+  Review,
   Verdict,
   WatchlistItem,
 } from "@/lib/types";
@@ -258,21 +259,25 @@ export async function loadPublicProfileState(
   client: SupabaseClient,
   profileId: string,
 ): Promise<PublicProfileState> {
-  const [profileResult, diaryResult, canonResult] = await Promise.all([
+  const [profileResult, diaryResult, canonResult, reviewResult] = await Promise.all([
     client.from("public_profiles").select("id, username, display_name, avatar_url, bio").eq("id", profileId).single(),
     client.from("public_diary_entries").select("*").eq("user_id", profileId).order("watched_on", { ascending: false }),
     client.from("public_canon").select("*").eq("user_id", profileId).order("canon_rank", { ascending: true }),
+    client.from("public_reviews").select("*").eq("user_id", profileId).order("updated_at", { ascending: false }),
   ]);
   if (profileResult.error) throw profileResult.error;
   if (diaryResult.error) throw diaryResult.error;
   if (canonResult.error) throw canonResult.error;
+  if (reviewResult.error) throw reviewResult.error;
 
   const profileRow = profileResult.data as DbRow;
   const diaryRows = asRows(diaryResult.data);
   const canonRows = asRows(canonResult.data);
+  const reviewRows = asRows(reviewResult.data);
   const movieIds = [...new Set([
     ...diaryRows.map((row) => number(row.tmdb_id)),
     ...canonRows.map((row) => number(row.tmdb_id)),
+    ...reviewRows.map((row) => number(row.tmdb_id)),
   ])].filter((id) => id > 0);
   let movieRows: DbRow[] = [];
   let paletteRows: DbRow[] = [];
@@ -312,6 +317,10 @@ export async function loadPublicProfileState(
         isRewatch: Boolean(row.is_rewatch),
         createdAt: text(row.created_at),
       })),
+      reviews: reviewRows.map((row) => ({
+        id: text(row.id), movieId: number(row.tmdb_id), body: text(row.body),
+        visibility: "public" as const, createdAt: text(row.created_at), updatedAt: text(row.updated_at),
+      })),
       ranked: canonRows.map((row) => ({
         movieId: number(row.tmdb_id),
         verdict: text(row.verdict) as Verdict,
@@ -349,8 +358,13 @@ export async function loadUserState(
   client: SupabaseClient,
   userId: string,
 ): Promise<AppState> {
-  const { data, error } = await client.rpc("get_after_credits_state");
+  const [snapshotResult, reviewsResult] = await Promise.all([
+    client.rpc("get_after_credits_state"),
+    client.from("reviews").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
+  ]);
+  const { data, error } = snapshotResult;
   if (error) throw error;
+  if (reviewsResult.error) throw reviewsResult.error;
   const snapshot = (
     Array.isArray(data) ? data[0] : data
   ) as DbRow | null;
@@ -367,8 +381,9 @@ export async function loadUserState(
   const activeAnswers = asRows(snapshot.ranking_session_answers);
   const movieRows = asRows(snapshot.movies);
   const paletteRows = asRows(snapshot.movie_palettes);
+  const reviewRows = asRows(reviewsResult.data);
   if (
-    [watches, watchlistRows, canonRows, historyRows, comparisonRows]
+    [watches, watchlistRows, canonRows, historyRows, comparisonRows, reviewRows]
       .flat()
       .some((row) => text(row.user_id) !== userId) ||
     (activeDbSession && text(activeDbSession.user_id) !== userId)
@@ -376,10 +391,24 @@ export async function loadUserState(
     throw new Error("Supabase returned another user's data.");
   }
 
-  const cachedMovies = movieRows.map((row) =>
+  const missingMovieIds = reviewRows.map((row) => number(row.tmdb_id)).filter((id) => id > 0 && !movieRows.some((row) => number(row.tmdb_id) === id));
+  let allMovieRows = movieRows;
+  let allPaletteRows = paletteRows;
+  if (missingMovieIds.length) {
+    const [moviesResult, palettesResult] = await Promise.all([
+      client.from("movies").select("*").in("tmdb_id", missingMovieIds),
+      client.from("movie_palettes").select("*").in("tmdb_id", missingMovieIds),
+    ]);
+    if (moviesResult.error) throw moviesResult.error;
+    if (palettesResult.error) throw palettesResult.error;
+    allMovieRows = [...movieRows, ...asRows(moviesResult.data)];
+    allPaletteRows = [...paletteRows, ...asRows(palettesResult.data)];
+  }
+
+  const cachedMovies = allMovieRows.map((row) =>
     mapMovie(
       row,
-      paletteRows.find((palette) => number(palette.tmdb_id) === number(row.tmdb_id)),
+      allPaletteRows.find((palette) => number(palette.tmdb_id) === number(row.tmdb_id)),
     ),
   );
   cacheMovies(cachedMovies);
@@ -394,6 +423,11 @@ export async function loadUserState(
     rankingStatus: text(row.ranking_status, "pending") as DiaryEntry["rankingStatus"],
     isRewatch: Boolean(row.is_rewatch),
     createdAt: text(row.created_at),
+  }));
+  const reviews: Review[] = reviewRows.map((row) => ({
+    id: text(row.id), movieId: number(row.tmdb_id), body: text(row.body),
+    visibility: text(row.visibility) === "public" ? "public" : "private",
+    createdAt: text(row.created_at), updatedAt: text(row.updated_at),
   }));
   const ranked: RankedFilm[] = canonRows.map((row) => ({
     movieId: number(row.tmdb_id),
@@ -503,6 +537,7 @@ export async function loadUserState(
 
   return {
     diary,
+    reviews,
     ranked,
     watchlist,
     movieCache: cachedMovies,
@@ -617,6 +652,29 @@ export async function insertWatchEntry(
     rankingStatus: text(row.ranking_status) as DiaryEntry["rankingStatus"],
     isRewatch: Boolean(row.is_rewatch),
     createdAt: text(row.created_at),
+  };
+}
+
+export async function saveReviewRecord(
+  client: SupabaseClient,
+  input: { userId: string; movie: Movie; body: string; visibility: Review["visibility"] },
+): Promise<Review | null> {
+  const body = input.body.trim();
+  if (!body) {
+    const { error } = await client.from("reviews").delete().eq("user_id", input.userId).eq("tmdb_id", input.movie.id);
+    if (error) throw error;
+    return null;
+  }
+  await cacheMovieRecord(client, input.movie);
+  const { data, error } = await client.from("reviews").upsert({
+    user_id: input.userId, tmdb_id: input.movie.id, body, visibility: input.visibility,
+  }, { onConflict: "user_id,tmdb_id" }).select("*").single();
+  if (error) throw error;
+  const row = data as DbRow;
+  return {
+    id: text(row.id), movieId: number(row.tmdb_id), body: text(row.body),
+    visibility: text(row.visibility) === "public" ? "public" : "private",
+    createdAt: text(row.created_at), updatedAt: text(row.updated_at),
   };
 }
 

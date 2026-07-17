@@ -53,7 +53,7 @@ export function PublicProfileSheet({
         <section className="public-profile-section content-wrap">
           <div className="section-heading"><h2>Their top films</h2><span className="section-note">Scores are relative to this person&rsquo;s own ranking</span></div>
           <div className="public-profile-canon">
-            {canon.slice(0, 10).map((row) => (
+            {canon.map((row) => (
               <button key={row.movie.id} onClick={() => onFilm(row.movie)} style={filmStyle(row.movie)}>
                 <span>{row.rank}</span>
                 <PosterArt movie={row.movie} />
@@ -65,14 +65,14 @@ export function PublicProfileSheet({
           {canon.length === 0 ? <p className="quiet-copy">No ranked films yet.</p> : null}
         </section>
         <section className="public-profile-section content-wrap">
-          <div className="section-heading"><h2>Latest watches</h2></div>
-          <div className="poster-rail">
-            {diary.slice(0, 6).map((entry) => {
+          <div className="section-heading"><h2>Full diary</h2><span className="section-note">Every public watch and note</span></div>
+          <div className="public-profile-diary">
+            {diary.map((entry) => {
               const movie = movieById(entry.movieId);
               return (
-                <button className="poster-card" key={entry.id} onClick={() => onFilm(movie)}>
+                <button key={entry.id} onClick={() => onFilm(movie)}>
                   <PosterArt movie={movie} />
-                  <span className="poster-card-copy"><strong>{movie.title}</strong><small>{prettyDate(entry.watchedOn)}</small></span>
+                  <span><strong>{movie.title}</strong><small>{prettyDate(entry.watchedOn)}{entry.isRewatch ? " · Rewatch" : ""}</small>{entry.note ? <q>{entry.note}</q> : null}</span>
                 </button>
               );
             })}

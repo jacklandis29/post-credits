@@ -49,6 +49,15 @@ export type DiaryEntry = {
   createdAt: string;
 };
 
+export type Review = {
+  id: string;
+  movieId: number;
+  body: string;
+  visibility: "private" | "public";
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type RankedFilm = {
   movieId: number;
   verdict: Verdict;
@@ -88,6 +97,7 @@ export type RankHistoryRecord = {
 
 export type AppState = {
   diary: DiaryEntry[];
+  reviews: Review[];
   ranked: RankedFilm[];
   watchlist: WatchlistItem[];
   movieCache?: Movie[];

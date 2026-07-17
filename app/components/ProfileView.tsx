@@ -46,6 +46,8 @@ export function ProfileView({
   onFilm,
   onSettings,
   onSignIn,
+  onStats,
+  onExport,
 }: {
   profile: ConnectedSupabase["profile"] | null;
   state: AppState;
@@ -55,6 +57,8 @@ export function ProfileView({
   onFilm: (movie: Movie) => void;
   onSettings: () => void;
   onSignIn: () => void;
+  onStats: () => void;
+  onExport: (format: "json" | "csv") => void;
 }) {
   const diary = sortDiary(state.diary);
   const topThree = signedOut
@@ -87,6 +91,7 @@ export function ProfileView({
             ) : (
               <span className="quiet-copy">Stored on this device</span>
             )}
+            {!signedOut ? <button className="secondary-action" onClick={onStats}>Stats &amp; year in review</button> : null}
           </div>
           <dl className="profile-page-stats">
             <div><dt>Ranked</dt><dd>{signedOut ? "—" : canon.length}</dd></div>
@@ -143,6 +148,7 @@ export function ProfileView({
             <p className="quiet-copy">Your latest watches will live here.</p>
           )}
         </section>
+        {!signedOut ? <section className="profile-export"><div><span>Your data</span><h2>Take it with you.</h2><p>Your diary is yours. Download a complete portable copy at any time.</p></div><div><button className="secondary-action" onClick={() => onExport("json")}>Download JSON</button><button className="secondary-action" onClick={() => onExport("csv")}>Download CSV</button></div></section> : null}
       </div>
     </div>
   );

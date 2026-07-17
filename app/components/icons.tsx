@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-export type View = "home" | "diary" | "canon" | "watchlist" | "search" | "profile";
+export type View = "home" | "diary" | "canon" | "stats" | "watchlist" | "search" | "profile";
 
 /**
  * Brand mark: credit lines rolling off the top of the screen, and the one
@@ -22,6 +22,7 @@ export function NavIcon({ view }: { view: View }) {
     home: <><path d="M3.5 8.2 9 3.8l5.5 4.4v6H10.8v-4H7.2v4H3.5z" /></>,
     diary: <><rect x="3" y="3.5" width="12" height="11" rx="1.5" /><path d="M6 2.5v3M12 2.5v3M3 7h12M6 9.5h2M10 9.5h2M6 12h2" /></>,
     canon: <><path d="M4 4h10M4 8h10M4 12h7" /><path d="m12.5 12.5 1.2 1.2 2.3-2.8" /></>,
+    stats: <><path d="M3.5 14.5V10h2.7v4.5M7.7 14.5V6.5h2.7v8M11.9 14.5V3.5h2.7v11" /></>,
     watchlist: <><path d="M5 2.8h8a.7.7 0 0 1 .7.7v11l-4.7-3.2L4.3 14.5v-11a.7.7 0 0 1 .7-.7z" /></>,
     search: <><circle cx="7.5" cy="7.5" r="4.5" /><path d="m10.9 10.9 3.7 3.7" /></>,
     profile: <><circle cx="9" cy="6.2" r="2.7" /><path d="M3.8 15c.4-3.2 2.2-4.8 5.2-4.8s4.8 1.6 5.2 4.8" /></>,

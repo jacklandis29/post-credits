@@ -7,10 +7,11 @@ import { cacheMovies, movieById } from "@/lib/seed";
 import { movieSimilarity } from "@/lib/similarity";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { loadCommunityMovieStats, type CommunityMovieStats } from "@/lib/supabase/data";
-import type { AppState, Movie } from "@/lib/types";
+import type { AppState, Movie, Review } from "@/lib/types";
 import { filmStyle, prettyDate, sortDiary, verdictCopy, type CanonRow } from "@/lib/ui";
 import { useEffect, useRef, useState } from "react";
 import { PosterArt, VerdictMark } from "./media";
+import { ReviewText } from "./ReviewText";
 
 export function FilmDetail({
   movie,
@@ -20,6 +21,9 @@ export function FilmDetail({
   onLog,
   onRerank,
   onWatchlist,
+  onSaveReview,
+  readOnly = false,
+  profileLabel = "Your",
 }: {
   movie: Movie;
   state: AppState;
@@ -28,11 +32,18 @@ export function FilmDetail({
   onLog: () => void;
   onRerank: () => void;
   onWatchlist: () => void;
+  onSaveReview?: (movie: Movie, body: string, visibility: Review["visibility"]) => void;
+  readOnly?: boolean;
+  profileLabel?: string;
 }) {
   const filmSheetRef = useRef<HTMLDivElement>(null);
   const [film, setFilm] = useState(movie);
   const [community, setCommunity] = useState<CommunityMovieStats | null>(null);
   const [communityLoaded, setCommunityLoaded] = useState(false);
+  const review = state.reviews.find((item) => item.movieId === movie.id);
+  const [reviewEditing, setReviewEditing] = useState(false);
+  const [reviewBody, setReviewBody] = useState(review?.body ?? "");
+  const [reviewVisibility, setReviewVisibility] = useState<Review["visibility"]>(review?.visibility ?? "private");
   const row = canon.find((item) => item.movie.id === movie.id);
   const history = sortDiary(state.diary.filter((entry) => entry.movieId === movie.id));
   const latest = history[0];
@@ -182,10 +193,10 @@ export function FilmDetail({
             <h1>{film.title}</h1>
             <p>{film.year} · {film.director}</p>
             {film.tagline ? <blockquote className="film-tagline">{film.tagline}</blockquote> : null}
-            <div className="film-actions">
+            {!readOnly ? <div className="film-actions">
               <button className="primary-action" onClick={onLog}>{row ? "Log a rewatch" : "Log this film"}</button>
               {!row ? <button className={`secondary-action watchlist-toggle${onWatchlistNow ? " active" : ""}`} onClick={onWatchlist}><span className="watchlist-toggle-icon" aria-hidden="true">{onWatchlistNow ? "✓" : "+"}</span><span>{onWatchlistNow ? "On Watchlist" : "Add to Watchlist"}</span></button> : null}
-            </div>
+            </div> : null}
           </div>
         </div>
         <section className="film-link-bar" aria-label="Film links">
@@ -193,11 +204,19 @@ export function FilmDetail({
           {film.imdbId ? <a href={`https://www.imdb.com/title/${film.imdbId}/`} target="_blank" rel="noreferrer">IMDb <span aria-hidden="true">↗</span></a> : null}
           <a href={`https://www.themoviedb.org/movie/${film.id}`} target="_blank" rel="noreferrer">TMDB <span aria-hidden="true">↗</span></a>
         </section>
+        <section className="film-review-section">
+          <div className="film-review-heading"><div><span>{readOnly ? `${profileLabel}'s review` : "Your review"}</span><h2>{review ? "What this film left behind" : "Write beyond the watch"}</h2></div>{!readOnly && !reviewEditing ? <button className="text-action" onClick={() => setReviewEditing(true)}>{review ? "Edit review" : "Write a review"}</button> : null}</div>
+          {reviewEditing && !readOnly ? <div className="review-editor">
+            <textarea autoFocus value={reviewBody} maxLength={50000} onChange={(event) => setReviewBody(event.target.value)} placeholder="Say as much as you need. This review lives with the film, not a specific watch." />
+            <div className="review-editor-meta"><small>Formatting: *italics*, **bold**, &gt; quotes, # headings, and - lists</small><label>Visibility <select value={reviewVisibility} onChange={(event) => setReviewVisibility(event.target.value as Review["visibility"])}><option value="private">Only me</option><option value="public">Public</option></select></label></div>
+            <div className="review-editor-actions"><button className="primary-action" disabled={!reviewBody.trim() && !review} onClick={() => { onSaveReview?.(film, reviewBody, reviewVisibility); setReviewEditing(false); }}>Save review</button>{review ? <button className="text-action danger" onClick={() => { setReviewBody(""); onSaveReview?.(film, "", reviewVisibility); setReviewEditing(false); }}>Delete</button> : null}<button className="text-action" onClick={() => { setReviewBody(review?.body ?? ""); setReviewVisibility(review?.visibility ?? "private"); setReviewEditing(false); }}>Cancel</button></div>
+          </div> : review ? <article className="film-review-copy"><ReviewText body={review.body} /><footer>{review.visibility === "private" && !readOnly ? "Only you can see this" : "Public review"} · Updated {prettyDate(review.updatedAt.slice(0, 10))}</footer></article> : <p className="insight-empty">{readOnly ? `${profileLabel} has not published a review of this film.` : "Reviews are revisitable and do not require a dated diary entry."}</p>}
+        </section>
         <div className="film-insights">
           <section className="insight-card personal-ranking-card">
             <div className="insight-heading">
-              <div><span>Your canon</span><h2>{row ? "Where it sits" : "Not ranked yet"}</h2></div>
-              {row ? <button className="text-action" onClick={onRerank}>Re-rank</button> : null}
+              <div><span>{readOnly ? `${profileLabel}'s canon` : "Your canon"}</span><h2>{row ? "Where it sits" : "Not ranked yet"}</h2></div>
+              {row && !readOnly ? <button className="text-action" onClick={onRerank}>Re-rank</button> : null}
             </div>
             {row ? (
               <div className="personal-ranking-body">
@@ -252,7 +271,7 @@ export function FilmDetail({
           <div className="film-record">
             {personalTimeline.length ? (
               <section className="film-record-panel">
-                <h2 className="section-label">Your history</h2>
+                <h2 className="section-label">{readOnly ? `${profileLabel}'s history` : "Your history"}</h2>
                 <div className="film-timeline">
                   {personalTimeline.map((event) => (
                     <article key={event.key}>

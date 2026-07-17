@@ -16,6 +16,7 @@ const empty = { diary: [], ranked: [], watchlist: [], movieCache: [], committedR
 test("migrates legacy local snapshots into the versioned format", () => {
   const parsed = localState.parseLocalState(JSON.stringify(empty));
   assert.deepEqual(parsed.diary, []);
+  assert.deepEqual(parsed.reviews, []);
   const serialized = JSON.parse(localState.serializeLocalState(parsed));
   assert.equal(serialized.version, 1);
 });
