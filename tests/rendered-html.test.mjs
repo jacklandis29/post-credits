@@ -64,3 +64,18 @@ test("removes starter-only preview infrastructure and metadata", async () => {
   assert.doesNotMatch(layout, /Starter Project|codex-preview/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 });
+
+test("production auth is visibly protected and returns to the canonical site", async () => {
+  const [gate, turnstile, confirmation, magicLink] = await Promise.all([
+    readFile(new URL("../app/SupabaseGate.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/Turnstile.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/templates/confirmation.html", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/templates/magic_link.html", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(gate, /productionAuthRedirectUrl = "https:\/\/postcredits\.club\/"/);
+  assert.match(turnstile, /appearance: "always"/);
+  assert.doesNotMatch(turnstile, /interaction-only/);
+  assert.match(confirmation, /\{\{ \.ConfirmationURL \}\}/);
+  assert.match(magicLink, /\{\{ \.ConfirmationURL \}\}/);
+});

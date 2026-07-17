@@ -7,7 +7,7 @@ type TurnstileApi = {
     container: HTMLElement,
     options: {
       sitekey: string;
-      appearance: "interaction-only";
+      appearance: "always";
       theme: "dark";
       size: "flexible";
       callback: (token: string) => void;
@@ -82,7 +82,7 @@ export function Turnstile({
         if (disposed || !container.current) return;
         widgetId = turnstile.render(container.current, {
           sitekey: siteKey,
-          appearance: "interaction-only",
+          appearance: "always",
           theme: "dark",
           size: "flexible",
           callback: onToken,

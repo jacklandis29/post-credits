@@ -28,6 +28,7 @@ import { Turnstile } from "./components/Turnstile";
 // bundle so archive-based deployments cannot omit it when runtime variables
 // are applied after the client build has already been created.
 const productionTurnstileSiteKey = "0x4AAAAAAD3eZHzFRTKGEf-A";
+const productionAuthRedirectUrl = "https://postcredits.club/";
 const turnstileSiteKey =
   process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ||
   (process.env.NODE_ENV === "production" ? productionTurnstileSiteKey : "");
@@ -210,7 +211,10 @@ function AuthCard({
     const { error: authError } = await client.auth.signInWithOtp({
       email: normalizedEmail,
       options: {
-        emailRedirectTo: `${window.location.origin}${window.location.pathname}`,
+        emailRedirectTo:
+          process.env.NODE_ENV === "production"
+            ? productionAuthRedirectUrl
+            : `${window.location.origin}${window.location.pathname}`,
         shouldCreateUser: true,
         captchaToken: captchaToken || undefined,
       },

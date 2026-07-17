@@ -3134,8 +3134,10 @@ kbd {
 .supabase-auth-intro { color: var(--quiet); font-size: 13.5px; line-height: 1.55; }
 
 .supabase-auth-form { display: grid; gap: 12px; margin-top: 6px; }
-.turnstile-slot { min-height: 0; overflow: hidden; }
-.turnstile-slot:not(:empty) { min-height: 65px; }
+.turnstile-slot {
+  min-height: 65px;
+  overflow: hidden;
+}
 .supabase-auth-form label { display: grid; gap: 6px; }
 .supabase-auth-form label span {
   color: var(--quiet);

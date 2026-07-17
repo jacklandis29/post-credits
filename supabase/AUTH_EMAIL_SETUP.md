@@ -10,22 +10,24 @@ receives a secret or service-role key.
 ### URL configuration
 
 - Set **Site URL** to the single canonical HTTPS production origin.
-- Add that exact origin to **Redirect URLs**.
-- Add only the localhost origins actively used for development. Do not use a
-  production wildcard.
+- Add `https://postcredits.club/**` to **Redirect URLs**.
+- Add only the localhost origins actively used for development. Do not allow
+  unrelated preview or third-party domains.
 - Add the Supabase callback URL shown in the Google provider panel to the Google
   OAuth client's authorized redirect URIs.
 - Exercise email and Google sign-in from the production hostname after every
   URL or provider change.
 
-The client constructs callback URLs from `window.location.origin` and the
-current pathname. It never accepts a caller-supplied external redirect.
+The production client uses `https://postcredits.club/` as its callback. Local
+development uses the current localhost origin and pathname. Neither flow
+accepts a caller-supplied external redirect.
 
-### Magic-link email
+### Confirmation and magic-link emails
 
-- Subject: `Your Post Credits sign-in link`
-- Copy `supabase/templates/magic_link.html` into **Authentication > Email
-  Templates > Magic Link**.
+- Set **Confirm signup** to subject `Finish creating your Post Credits account`
+  and copy `supabase/templates/confirmation.html` into its body.
+- Set **Magic Link** to subject `Your Post Credits sign-in link` and copy
+  `supabase/templates/magic_link.html` into its body.
 - Keep `{{ .ConfirmationURL }}` in the template. Supabase generates the PKCE
   confirmation URL and the browser client exchanges the returned code.
 - Set the email OTP/magic-link expiry to **3600 seconds or less**.
@@ -36,7 +38,7 @@ Supabase's built-in sender is development-only and heavily rate limited. Before
 launch, configure **Authentication > Emails > SMTP Settings**:
 
 - Sender name: `Post Credits`
-- Sender address: `login@auth.postcredits.club`
+- Sender address: `noreply@auth.postcredits.club`
 - SMTP provider: Resend
 - Host: `smtp.resend.com`
 - Port: `465`
@@ -56,8 +58,9 @@ DMARC policy, and never reuse a leaked or general-purpose API key.
 4. Deploy the client and Supabase setting together. Enabling Supabase CAPTCHA
    before the public site key is deployed will block email-link requests.
 
-The widget uses `interaction-only` appearance, so most people never see it.
-Google sign-in remains available if Turnstile cannot load.
+The widget uses the always-visible appearance so the security check never leaves
+an unexplained clickable blank area. Google sign-in remains available if
+Turnstile cannot load.
 
 Review **Authentication > Rate Limits** after custom SMTP is active. Keep the
 per-address resend cooldown at 60 seconds or longer and choose project-wide
