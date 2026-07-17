@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for Post Credits. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { applySecurityHeaders, createContentSecurityPolicy } from "../lib/server/security-headers";
 
 interface AssetFetcher {
   fetch(request: Request): Promise<Response>;
@@ -17,40 +18,21 @@ interface Env {
   };
 }
 
-function withSecurityHeaders(response: Response, requestUrl: string): Response {
-  const headers = new Headers(response.headers);
-  headers.set("x-content-type-options", "nosniff");
-  headers.set("referrer-policy", "strict-origin-when-cross-origin");
-  headers.set("permissions-policy", "camera=(), microphone=(), geolocation=()");
-  headers.set("x-frame-options", "DENY");
-  headers.set(
-    "content-security-policy",
-    "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data: https://image.tmdb.org; media-src 'self' https://www.youtube.com https://www.youtube-nocookie.com; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-src https://challenges.cloudflare.com https://www.youtube.com https://www.youtube-nocookie.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.themoviedb.org https://challenges.cloudflare.com; upgrade-insecure-requests",
-  );
-  if (requestUrl.startsWith("https://")) {
-    headers.set("strict-transport-security", "max-age=31536000; includeSubDomains");
-  }
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
-}
-
 interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
   passThroughOnException(): void;
 }
 
-// Image security config. SVG sources with .svg extension auto-skip the
-// optimization endpoint on the client side (served directly, no proxy).
-// To route SVGs through the optimizer (with security headers), set
-// dangerouslyAllowSVG: true in next.config.js and uncomment below:
-// const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
-
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const randomBytes = new Uint8Array(18);
+    crypto.getRandomValues(randomBytes);
+    const nonce = btoa(String.fromCharCode(...randomBytes));
+    const contentSecurityPolicy = createContentSecurityPolicy(
+      nonce,
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+    );
 
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
@@ -61,10 +43,16 @@ const worker = {
           return result.response();
         },
       }, allowedWidths);
-      return withSecurityHeaders(response, request.url);
+      return applySecurityHeaders(response, request.url, contentSecurityPolicy);
     }
 
-    return withSecurityHeaders(await handler.fetch(request, env, ctx), request.url);
+    // Vinext reads a nonce from the request CSP and applies it to its dynamic
+    // hydration scripts. The same policy is then returned to the browser.
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set("content-security-policy", contentSecurityPolicy);
+    const securedRequest = new Request(request, { headers: requestHeaders });
+    const response = await handler.fetch(securedRequest, env, ctx);
+    return applySecurityHeaders(response, request.url, contentSecurityPolicy);
   },
 };
 

@@ -58,7 +58,7 @@ import { QuickSearchModal, SearchView } from "./components/SearchView";
 import { ProfileView } from "./components/ProfileView";
 import { WatchlistView } from "./components/WatchlistView";
 import { AboutSheet, ImportLocalSheet, ProfileSheet, PublicProfileSheet } from "./components/sheets";
-import { FilmRollIcon, LockIcon, NavIcon, PlusIcon, SearchIcon, SidebarToggleIcon, type View } from "./components/icons";
+import { FilmRollIcon, LockIcon, NavIcon, SearchIcon, SidebarToggleIcon, type View } from "./components/icons";
 
 const STORAGE_KEY = "after-credits-local-v2";
 const IMPORT_DECIDED_KEY = "post-credits-import-decided-v1";
@@ -636,6 +636,7 @@ function AfterCreditsCore({
     bio: string;
     isPublic: boolean;
     isDiscoverable: boolean;
+    defaultNoteVisibility: "private" | "public";
   }) {
     if (!connection) return;
     runConnected(async () => {
@@ -1869,19 +1870,17 @@ function AfterCreditsCore({
       </main>
 
       <nav className="mobile-nav" aria-label="Mobile navigation">
-        {(["home", "diary", "canon", "search", "profile"] as View[]).map((item) => (
+        {(["home", "diary", "canon", "watchlist", "profile"] as View[]).map((item) => (
           <button
             key={item}
             className={view === item ? "active" : ""}
+            aria-current={view === item ? "page" : undefined}
             onClick={() => openView(item)}
           >
             <NavIcon view={item} />
             <span>{viewLabels[item]}</span>
           </button>
         ))}
-        <button className="mobile-log" onClick={openLogger} aria-label="Log a film">
-          <PlusIcon />
-        </button>
       </nav>
 
       {selectedFilm ? (

@@ -1,6 +1,10 @@
 import {
   beginTmdbConcurrency,
+  consumeTmdbBudget,
+  tmdbRequestIdentity,
 } from "@/lib/tmdb/limit";
+import { logServerError } from "@/lib/server/log";
+import { readBoundedJsonObject } from "@/lib/server/request";
 
 const TMDB_ORIGIN = "https://api.themoviedb.org/3";
 
@@ -210,6 +214,17 @@ async function safeJson(response: Response): Promise<JsonObject | null> {
 }
 
 export async function POST(request: Request) {
+  if (!consumeTmdbBudget(`cache:${tmdbRequestIdentity(request)}`, { limit: 60 })) {
+    return new Response(JSON.stringify({ error: "Movie cache request limit reached" }), {
+      status: 429,
+      headers: {
+        "cache-control": "no-store",
+        "content-type": "application/json; charset=utf-8",
+        "retry-after": "10",
+      },
+    });
+  }
+
   const authorization = request.headers.get("authorization") ?? "";
   const bearer = /^Bearer\s+(\S+)$/.exec(authorization);
   if (!bearer || bearer[1].length > 8_192) {
@@ -217,17 +232,7 @@ export async function POST(request: Request) {
   }
   const forwardedAuthorization = `Bearer ${bearer[1]}`;
 
-  const contentLength = Number(request.headers.get("content-length") ?? "0");
-  if (Number.isFinite(contentLength) && contentLength > 1_024) {
-    return json({ error: "Invalid request" }, 400);
-  }
-
-  let body: JsonObject | null = null;
-  try {
-    body = object(await request.json());
-  } catch {
-    return json({ error: "Invalid request" }, 400);
-  }
+  const body = await readBoundedJsonObject(request, 1_024);
   if (
     !body ||
     Object.keys(body).length !== 1 ||
@@ -260,7 +265,8 @@ export async function POST(request: Request) {
     movieLookupUrl.searchParams.set("tmdb_id", `eq.${tmdbId}`);
     movieLookupUrl.searchParams.set("select", "tmdb_id");
     movieLookupUrl.searchParams.set("limit", "1");
-  } catch {
+  } catch (error) {
+    logServerError("/api/tmdb/cache/config", error, request);
     return json({ error: "Supabase is not configured" }, 503);
   }
 
@@ -392,7 +398,8 @@ export async function POST(request: Request) {
     } finally {
       release();
     }
-  } catch {
+  } catch (error) {
+    logServerError("/api/tmdb/cache", error, request);
     return json({ error: "Film details are temporarily unavailable" }, 502);
   }
 }

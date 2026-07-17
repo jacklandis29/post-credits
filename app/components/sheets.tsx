@@ -102,6 +102,7 @@ export function ProfileSheet({
     bio: string;
     isPublic: boolean;
     isDiscoverable: boolean;
+    defaultNoteVisibility: "private" | "public";
   }) => void;
   onSignOut: () => void;
   onSignOutEverywhere: () => void;
@@ -112,6 +113,7 @@ export function ProfileSheet({
   const [bio, setBio] = useState(profile.bio);
   const [isPublic, setIsPublic] = useState(profile.isPublic);
   const [isDiscoverable, setIsDiscoverable] = useState(profile.isDiscoverable);
+  const [defaultNoteVisibility, setDefaultNoteVisibility] = useState(profile.defaultNoteVisibility);
   const [confirmGlobalSignOut, setConfirmGlobalSignOut] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
@@ -119,7 +121,7 @@ export function ProfileSheet({
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!displayName.trim()) return;
-    onSave({ displayName, bio, isPublic, isDiscoverable });
+    onSave({ displayName, bio, isPublic, isDiscoverable, defaultNoteVisibility });
   }
 
   return (
@@ -137,6 +139,14 @@ export function ProfileSheet({
             <legend>Privacy</legend>
             <label className="setting-toggle"><span><strong>Public profile</strong><small>{profile.publicAccessApproved ? "Let people visit your diary and ranking." : "Public profiles are invite-only during the private alpha."}</small></span><input type="checkbox" checked={isPublic} disabled={!profile.publicAccessApproved} onChange={(event) => { setIsPublic(event.target.checked); if (!event.target.checked) setIsDiscoverable(false); }} /></label>
             <label className="setting-toggle"><span><strong>Discoverable</strong><small>Allow your username to appear in People search.</small></span><input type="checkbox" checked={isDiscoverable} disabled={!isPublic} onChange={(event) => setIsDiscoverable(event.target.checked)} /></label>
+            <label className="profile-field">
+              <span>Default note visibility</span>
+              <select value={defaultNoteVisibility} onChange={(event) => setDefaultNoteVisibility(event.target.value === "public" ? "public" : "private")}>
+                <option value="private">Only me</option>
+                <option value="public">Public when my profile is public</option>
+              </select>
+              <small>Applies only to notes saved as “Use profile setting.” Existing notes stay private unless you choose Public here.</small>
+            </label>
           </fieldset>
           <fieldset className="profile-privacy">
             <legend>Account security</legend>

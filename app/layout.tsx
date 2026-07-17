@@ -16,20 +16,19 @@ const fraunces = Fraunces({
 });
 
 export async function generateMetadata(): Promise<Metadata> {
-  const requestHeaders = await headers();
-  const host =
-    requestHeaders.get("x-forwarded-host") ??
-    requestHeaders.get("host") ??
-    "localhost:3000";
-  const protocol =
-    requestHeaders.get("x-forwarded-proto") ??
-    (host.startsWith("localhost") || host.startsWith("127.0.0.1")
-      ? "http"
-      : "https");
-  const configuredSiteUrl = process.env.SITE_URL;
-  const metadataBase = configuredSiteUrl
-    ? new URL(configuredSiteUrl)
-    : new URL(`${protocol}://${host}`);
+  const configuredSiteUrl = process.env.SITE_URL?.trim();
+  let metadataBase: URL;
+  if (configuredSiteUrl) {
+    metadataBase = new URL(configuredSiteUrl);
+  } else if (process.env.NODE_ENV === "production") {
+    // A fixed safe fallback prevents forwarded Host headers from controlling
+    // canonical and social metadata if deployment configuration is lost.
+    metadataBase = new URL("https://postcredits.club");
+  } else {
+    const requestHeaders = await headers();
+    const host = requestHeaders.get("host") ?? "localhost:3000";
+    metadataBase = new URL(`http://${host}`);
+  }
   return {
     metadataBase,
     title: {
@@ -64,7 +63,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`dark ${geistSans.variable} ${fraunces.variable}`}>
+    <html lang="en" className={`dark ${geistSans.variable} ${fraunces.variable}`} suppressHydrationWarning>
       <head>
         <link rel="preconnect" href="https://image.tmdb.org" />
         <link rel="dns-prefetch" href="https://image.tmdb.org" />

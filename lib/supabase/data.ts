@@ -27,6 +27,7 @@ export type UserProfile = {
   timezone: string;
   isPublic: boolean;
   isDiscoverable: boolean;
+  defaultNoteVisibility: "private" | "public";
   bio: string;
   publicAccessApproved: boolean;
 };
@@ -122,7 +123,7 @@ export async function loadProfile(
 ): Promise<UserProfile | null> {
   const { data, error } = await client
     .from("profiles")
-    .select("id, username, display_name, timezone, is_public, is_discoverable, bio, public_access_approved")
+    .select("id, username, display_name, timezone, is_public, is_discoverable, default_note_visibility, bio, public_access_approved")
     .eq("id", userId)
     .maybeSingle();
   if (error) throw error;
@@ -135,6 +136,7 @@ export async function loadProfile(
     timezone: text(row.timezone, "UTC"),
     isPublic: Boolean(row.is_public),
     isDiscoverable: Boolean(row.is_discoverable),
+    defaultNoteVisibility: text(row.default_note_visibility) === "public" ? "public" : "private",
     bio: text(row.bio),
     publicAccessApproved: Boolean(row.public_access_approved),
   };
@@ -168,6 +170,7 @@ export async function updateProfile(
     bio: string;
     isPublic: boolean;
     isDiscoverable: boolean;
+    defaultNoteVisibility: "private" | "public";
   },
 ): Promise<UserProfile> {
   const { data, error } = await client
@@ -177,9 +180,10 @@ export async function updateProfile(
       bio: input.bio.trim() || null,
       is_public: input.isPublic,
       is_discoverable: input.isPublic && input.isDiscoverable,
+      default_note_visibility: input.defaultNoteVisibility,
     })
     .eq("id", input.userId)
-    .select("id, username, display_name, timezone, is_public, is_discoverable, bio, public_access_approved")
+    .select("id, username, display_name, timezone, is_public, is_discoverable, default_note_visibility, bio, public_access_approved")
     .single();
   if (error) throw error;
   const row = data as DbRow;
@@ -190,6 +194,7 @@ export async function updateProfile(
     timezone: text(row.timezone, "UTC"),
     isPublic: Boolean(row.is_public),
     isDiscoverable: Boolean(row.is_discoverable),
+    defaultNoteVisibility: text(row.default_note_visibility) === "public" ? "public" : "private",
     bio: text(row.bio),
     publicAccessApproved: Boolean(row.public_access_approved),
   };

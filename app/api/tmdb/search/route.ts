@@ -1,4 +1,5 @@
 import { beginTmdbRequest, tmdbRequestIdentity } from "@/lib/tmdb/limit";
+import { logServerError } from "@/lib/server/log";
 
 const TMDB_ORIGIN = "https://api.themoviedb.org/3";
 const IMAGE_ORIGIN = "https://image.tmdb.org/t/p";
@@ -22,6 +23,7 @@ function response(body: unknown, status = 200, headers?: HeadersInit) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
+      "cache-control": "no-store",
       "content-type": "application/json; charset=utf-8",
       ...headers,
     },
@@ -129,7 +131,8 @@ export async function GET(request: Request) {
       200,
       { "cache-control": "public, max-age=60, stale-while-revalidate=240" },
     );
-  } catch {
+  } catch (error) {
+    logServerError("/api/tmdb/search", error, request);
     return response(
       { error: "Film search is temporarily unavailable", results: [] },
       502,

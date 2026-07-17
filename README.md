@@ -1,75 +1,61 @@
 # Post Credits
 
-Post Credits is a film diary with comparison-based ranking.
+Post Credits is a personal film diary built around comparison instead of star ratings.
 
-This repository currently contains a working private alpha:
+Log a film, choose a broad verdict, then answer a short run of head-to-head questions. The app places the film in your personal canon and derives a score from that position. Rewatches add to the diary without duplicating the film in the ranking; unfinished films remain diary entries but stay outside the canon.
 
-- Home, Diary, Ranking, Watchlist, People, Profile, and film-detail surfaces
-- New-watch, rewatch, DNF, verdict, bounded comparison, skip, Undo, accept-placement, and manual re-rank flows
-- Deterministic verdict-banded scores and a pure, tested ranking engine
-- Crash-aware UI state: the watch entry is created before ranking, and a provisional placement exists as soon as a verdict is chosen
-- Responsive behavior down to 320 px, keyboard-focus treatment, missing-art fallbacks, and reduced-motion support
-- Live TMDB title search plus selected-film detail and credits lookup, all proxied server-side
-- Debounced queries, bounded 429 retry behavior, per-caller request budgets, and server-side TMDB concurrency limits
-- Supabase email/Google authentication, profile setup, persistence adapters, transaction functions, RLS policies, and security-oriented documentation
+## Stack
 
-## Structure
+- Next.js App Router, React, and TypeScript
+- Vinext and Cloudflare Workers
+- Supabase Auth and Postgres with row-level security
+- TMDB for film metadata and artwork
 
-- `app/AfterCreditsApp.tsx` — application core: state machine, persistence orchestration, and shell
-- `app/components/` — presentational views (Home, Diary, Ranking, Watchlist, Search, Profile, Landing), the log/ranking flow, film detail, and sheets
-- `app/globals.css` — the design system: OLED-black chrome, Fraunces display serif, per-film palette tinting
-- `lib/ranking.ts` — pure, tested comparison-ranking engine
-- `lib/ui.ts` — shared canon/diary helpers
-- `lib/supabase/` — auth-aware persistence layer; `app/api/tmdb/` — server-side TMDB proxy
+## Local development
 
-## Run locally
-
-Requirements: Node.js 22.13 or newer.
+Post Credits requires Node.js 22.13 or newer.
 
 ```bash
 npm install
+cp .env.example .env
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+The app runs at [http://localhost:3000](http://localhost:3000). Supabase is optional for local development; without it, the app uses browser storage. TMDB credentials are required for live film search.
 
-With Supabase configured, the public site and TMDB browsing remain visible while personal diary data and write actions require authentication. Signed-in data uses Supabase as its source of truth. If the public Supabase variables are omitted, the app runs in an explicit local-only fallback mode.
-
-## TMDB
-
-Copy `.env.example` to `.env` and set either:
+Use either a TMDB read-access token or API key:
 
 ```bash
-TMDB_API_TOKEN=your_read_access_token
+TMDB_API_TOKEN=
+# or
+TMDB_API_KEY=
 ```
 
-or:
+For hosted accounts and persistence, add the Supabase values documented in [.env.example](./.env.example) and apply the migrations in [`supabase/migrations`](./supabase/migrations).
 
-```bash
-TMDB_API_KEY=your_api_key
-```
-
-Credentials remain server-side. Search results are fetched from TMDB, and selecting a result performs a second lookup for runtime, director, genres, cast, keywords, overview, and artwork. Cache writes accept only a TMDB ID from the browser and re-fetch authoritative metadata on the server.
-
-## Supabase
-
-The initial migration lives at `supabase/migrations/0001_after_credits.sql`. Configure `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. The server-only authoritative movie-cache writer also requires `SUPABASE_SECRET_KEY` (recommended) or the legacy `SUPABASE_SERVICE_ROLE_KEY`; neither may use a `NEXT_PUBLIC_` prefix.
-
-The configured project must have the migration applied before authentication and persistence can load. See `supabase/README.md` for setup and verification.
-
-## Verification
+## Useful commands
 
 ```bash
 npm run typecheck
 npm run lint
-npm run build
-node --test tests/*.test.mjs
+npm test
+npm run deploy:check
 ```
 
-The ranking suite covers score bands, deterministic global rank, bounded binary insertion, similarity tie-breaking, the five-answer ceiling, skips, repeated Undo, accepted provisional placements, and immutable comparison-event drafts.
+`npm test` builds the Worker bundle before running the Node test suite. The tests cover the ranking algorithm, local-state migration and validation, security headers, request limits, authentication templates, and the server-rendered application shell.
 
-## Product source
+## Repository layout
 
-The full product requirements and release sequencing are in [`PRD.md`](./PRD.md). The UI uses live TMDB artwork and metadata, while authentication and hosted persistence are wired through Supabase.
+- `app/` — routes, application shell, and UI
+- `lib/ranking.ts` — deterministic comparison-ranking engine
+- `lib/supabase/` — authenticated persistence layer
+- `lib/server/` — request parsing, logging, and response security
+- `worker/` — Cloudflare Worker entry point
+- `supabase/` — schema migrations and operational setup notes
+- `tests/` — domain, rendering, and security tests
 
-Film data and artwork are provided by TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB.
+## Data and privacy
+
+Personal records are owner-scoped in Postgres. Public profiles read through restricted views rather than exposing base tables, and note visibility defaults to private. TMDB and Supabase administrative credentials are used only by server routes.
+
+Film data and artwork are provided by TMDB. Post Credits uses the TMDB API but is not endorsed or certified by TMDB.

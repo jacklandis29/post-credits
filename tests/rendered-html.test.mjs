@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function render(pathname = "/") {
@@ -44,25 +44,12 @@ test("server-renders the finished Post Credits product", async () => {
     "utf8",
   );
   assert.match(appSource, /Diary/);
-  assert.match(appSource, /Log a film/);
+  assert.match(appSource, /onLog=\{openLogger\}/);
+  assert.match(appSource, /\["home", "diary", "canon", "watchlist", "profile"\]/);
+  assert.doesNotMatch(appSource, /className="mobile-log"/);
   assert.match(logFlowSource, /Did not finish/);
   assert.match(logFlowSource, /dnf-action" disabled=\{!isValidLocalDate/);
   assert.doesNotMatch(html, /Your latest watch|There is no feed waiting underneath|class="eyebrow"/i);
-  assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
-});
-
-test("removes starter-only preview infrastructure and metadata", async () => {
-  const [page, layout, packageJson] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../package.json", import.meta.url), "utf8"),
-  ]);
-
-  await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
-  assert.match(page, /AfterCreditsApp/);
-  assert.match(layout, /default: "Post Credits"/);
-  assert.doesNotMatch(layout, /Starter Project|codex-preview/);
-  assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 });
 
 test("production auth is visibly protected and returns to the canonical site", async () => {

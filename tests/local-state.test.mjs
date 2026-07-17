@@ -37,3 +37,18 @@ test("reports quota failures without destroying the current state", () => {
   assert.match(result.error, /out of storage space/i);
   assert.deepEqual(result.state.diary, []);
 });
+
+test("rejects malformed nested local snapshots", () => {
+  const malformedDiary = {
+    ...empty,
+    diary: [{ movieId: "not-a-number" }],
+  };
+  assert.equal(localState.parseLocalState(JSON.stringify(malformedDiary)), null);
+
+  const malformedMovie = {
+    ...empty,
+    movieCache: [{ id: 1, title: "Missing required fields" }],
+  };
+  assert.equal(localState.parseLocalState(JSON.stringify(malformedMovie)), null);
+  assert.equal(localState.parseLocalState("{not json"), null);
+});

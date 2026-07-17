@@ -1,3 +1,7 @@
+import { consumeTmdbBudget, tmdbRequestIdentity } from "@/lib/tmdb/limit";
+import { logSecurityEvent, logServerError } from "@/lib/server/log";
+import { readBoundedJsonObject } from "@/lib/server/request";
+
 type JsonObject = Record<string, unknown>;
 
 function json(body: unknown, status = 200) {
@@ -25,6 +29,13 @@ async function safeJson(response: Response): Promise<JsonObject | null> {
 }
 
 export async function DELETE(request: Request) {
+  if (!consumeTmdbBudget(`account:${tmdbRequestIdentity(request)}`, {
+    limit: 10,
+    windowMs: 10 * 60_000,
+  })) {
+    return json({ error: "Too many account requests. Try again later." }, 429);
+  }
+
   let requestUrl: URL;
   try {
     requestUrl = new URL(request.url);
@@ -43,17 +54,7 @@ export async function DELETE(request: Request) {
   }
   const forwardedAuthorization = `Bearer ${bearer[1]}`;
 
-  const contentLength = Number(request.headers.get("content-length") ?? "0");
-  if (Number.isFinite(contentLength) && contentLength > 512) {
-    return json({ error: "Invalid request" }, 400);
-  }
-
-  let body: JsonObject | null = null;
-  try {
-    body = object(await request.json());
-  } catch {
-    return json({ error: "Invalid request" }, 400);
-  }
+  const body = await readBoundedJsonObject(request, 512);
   const username = typeof body?.username === "string"
     ? body.username.trim().toLowerCase()
     : "";
@@ -87,7 +88,8 @@ export async function DELETE(request: Request) {
     logoutUrl = new URL("/auth/v1/logout", supabaseUrl);
     logoutUrl.searchParams.set("scope", "global");
     adminUserUrl = new URL("/auth/v1/admin/users/placeholder", supabaseUrl);
-  } catch {
+  } catch (error) {
+    logServerError("/api/account/config", error, request);
     return json({ error: "Account deletion is not configured" }, 503);
   }
 
@@ -159,8 +161,10 @@ export async function DELETE(request: Request) {
       return json({ error: "Could not delete the account" }, 502);
     }
 
+    logSecurityEvent("account_deleted", request);
     return json({ deleted: true });
-  } catch {
+  } catch (error) {
+    logServerError("/api/account", error, request);
     return json({ error: "Account deletion is temporarily unavailable" }, 502);
   }
 }
