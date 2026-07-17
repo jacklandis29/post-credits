@@ -3,6 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- avatars come from user-provided URLs with initials fallback. */
 
 import type { PublicProfile } from "@/lib/supabase/data";
+import { DISCOVERY_DECADES, TMDB_GENRES, type DiscoveryFilters } from "@/lib/tmdb/discovery";
 import type { Movie } from "@/lib/types";
 import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { SearchIcon } from "./icons";
@@ -16,7 +17,12 @@ export function SearchView({
   profileBusy,
   movieError,
   profilesAvailable,
+  filterLabel,
+  filters,
+  browseActive,
+  showFilters = true,
   onQuery,
+  onFilters,
   onFilm,
   onProfile,
 }: {
@@ -27,14 +33,19 @@ export function SearchView({
   profileBusy: boolean;
   movieError: string;
   profilesAvailable: boolean;
+  filterLabel?: string | null;
+  filters: DiscoveryFilters;
+  browseActive: boolean;
+  showFilters?: boolean;
   onQuery: (value: string) => void;
+  onFilters: (filters: DiscoveryFilters) => void;
   onFilm: (movie: Movie) => void;
   onProfile: (profile: PublicProfile) => void;
 }) {
   const resultRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [activeResult, setActiveResult] = useState(-1);
   const searching = movieBusy || profileBusy;
-  const ready = query.trim().length >= 2;
+  const ready = query.trim().length >= 2 || browseActive;
   const resultCount = movies.length + profiles.length;
   const inputHint = ready ? `${resultCount} result${resultCount === 1 ? "" : "s"}` : "Movies & people";
 
@@ -73,7 +84,8 @@ export function SearchView({
     <div className="page content-wrap search-page">
       <div className="search-stage">
         <div className="search-title-block">
-          <h1>Find your next film.</h1>
+          <h1>{filterLabel ? `More from ${filterLabel}.` : "Find your next film."}</h1>
+          {filterLabel ? <p>Following a thread from the film page. Type anything to start a new search.</p> : showFilters ? <p>Search a title, or browse by genre and decade when you don&rsquo;t have one in mind.</p> : null}
         </div>
 
         <section className="unified-search" aria-label="Search movies and people">
@@ -104,6 +116,14 @@ export function SearchView({
             ) : null}
             {searching ? <span className="search-spinner" aria-label="Searching" /> : null}
           </label>
+
+          {showFilters ? (
+            <div className="search-filter-row" aria-label="Film discovery filters">
+              <label className="compact-select"><span>Genre</span><select value={filters.genre} onChange={(event) => onFilters({ ...filters, genre: event.target.value })}><option value="all">All genres</option>{TMDB_GENRES.map((genre) => <option key={genre.id} value={genre.id}>{genre.name}</option>)}</select></label>
+              <label className="compact-select"><span>Decade</span><select value={filters.decade} onChange={(event) => onFilters({ ...filters, decade: event.target.value })}><option value="all">All decades</option>{DISCOVERY_DECADES.map((decade) => <option key={decade} value={decade}>{decade}s</option>)}</select></label>
+              <label className="compact-select"><span>Order</span><select value={filters.sort} onChange={(event) => onFilters({ ...filters, sort: event.target.value as DiscoveryFilters["sort"] })}><option value="popularity">Most popular</option><option value="newest">Newest releases</option></select></label>
+            </div>
+          ) : null}
 
           <div className="search-status" aria-live="polite">
             <span>{searching ? "Searching…" : inputHint}</span>
@@ -178,7 +198,7 @@ export function SearchView({
                           <PosterArt movie={movie} />
                           <span className="unified-result-copy">
                             <strong>{movie.title}</strong>
-                            <small>{movie.year}{movie.director ? ` · ${movie.director}` : ""}</small>
+                            <small>{movie.releaseDate || movie.year}{movie.originalTitle && movie.originalTitle !== movie.title ? ` · ${movie.originalTitle}` : ""}{movie.genres[0] ? ` · ${movie.genres[0]}` : ""}{movie.director ? ` · ${movie.director}` : ""}</small>
                           </span>
                           <span className="result-kind">Movie</span>
                           <span className="result-arrow" aria-hidden="true">→</span>
@@ -198,8 +218,8 @@ export function SearchView({
 
                 {!searching && resultCount === 0 ? (
                   <div className="unified-search-empty">
-                    <span>No results for “{query.trim()}”</span>
-                    <p>{movieError || (profilesAvailable ? "Check the spelling or try a broader search." : "No matching film was found. Try the full title or release year.")}</p>
+                    <span>{query.trim() ? `No results for “${query.trim()}”` : "No films match these filters"}</span>
+                    <p>{movieError || (profilesAvailable ? "Check the spelling or broaden the genre or decade." : "Try another genre, decade, or title.")}</p>
                   </div>
                 ) : null}
               </>
@@ -234,7 +254,7 @@ export function QuickSearchModal({
           <div><span>Quick search</span><strong>Find a film or person</strong></div>
           <button className="sheet-close inline" type="button" onClick={onClose} aria-label="Close quick search">×</button>
         </div>
-        <SearchView {...searchProps} />
+        <SearchView {...searchProps} showFilters={false} browseActive={false} />
         <button className="quick-search-view-all" type="button" onClick={onViewAll}>
           Browse the full search page <span aria-hidden="true">→</span>
         </button>

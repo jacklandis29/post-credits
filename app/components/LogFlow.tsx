@@ -23,6 +23,8 @@ export type LogDraft = {
   movie: Movie | null;
   watchedOn: string;
   note: string;
+  containsSpoilers: boolean;
+  tags: string;
   visibility: NoteVisibility;
   entryId: string | null;
   reason: LogReason;
@@ -43,6 +45,8 @@ export function emptyDraft(): LogDraft {
     movie: null,
     watchedOn: todayLocal(),
     note: "",
+    containsSpoilers: false,
+    tags: "",
     visibility: "private",
     entryId: null,
     reason: "initial",
@@ -141,6 +145,10 @@ export function LogFilmFlow({
                 <label><span>Note visibility</span><select value={draft.visibility} onChange={(event) => onUpdate({ visibility: event.target.value as NoteVisibility })}><option value="private">Only me</option><option value="inherit">Use profile setting</option><option value="public">Public</option></select></label>
               </div>
               <label className="note-field"><span>Note <small>Optional · {draft.note.length} / 2,000</small></span><textarea value={draft.note} maxLength={2000} onChange={(event) => onUpdate({ note: event.target.value })} placeholder="What stayed with you?" /></label>
+              <div className="entry-form-row entry-extras">
+                <label className="profile-field"><span>Tags <small>Optional · comma-separated</small></span><input value={draft.tags} maxLength={329} onChange={(event) => onUpdate({ tags: event.target.value })} placeholder="watched-on-a-plane, with-mom" /></label>
+                <label className="spoiler-toggle"><input type="checkbox" checked={draft.containsSpoilers} onChange={(event) => onUpdate({ containsSpoilers: event.target.checked })} /><span><strong>Contains spoilers</strong><small>Hide this note behind a warning.</small></span></label>
+              </div>
             </div>
             <div className="details-actions">
               <button className="text-action dnf-action" disabled={!isValidLocalDate(draft.watchedOn)} onClick={() => onSave(true)}>Did not finish</button>

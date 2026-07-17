@@ -18,14 +18,25 @@ export type Movie = {
   releaseDate?: string;
   runtime: number | null;
   director: string;
+  directors?: Array<{ id: number; name: string }>;
   genres: string[];
+  genreDetails?: Array<{ id: number; name: string }>;
   cast?: string[];
   credits?: Array<{
+    id?: number;
     name: string;
     character: string | null;
     profile: string | null;
   }>;
   keywords?: string[];
+  keywordDetails?: Array<{ id: number; name: string }>;
+  watchProviders?: {
+    region: string;
+    link: string;
+    stream: Array<{ id: number; name: string; logo: string | null }>;
+    rent: Array<{ id: number; name: string; logo: string | null }>;
+    buy: Array<{ id: number; name: string; logo: string | null }>;
+  } | null;
   originalLanguage?: string | null;
   productionCountries?: string[];
   poster: string | null;
@@ -42,11 +53,28 @@ export type DiaryEntry = {
   movieId: number;
   watchedOn: string;
   note: string;
+  containsSpoilers?: boolean;
+  tags?: string[];
   visibility: NoteVisibility;
   completionStatus: CompletionStatus;
   rankingStatus: "pending" | "in_progress" | "complete" | "not_applicable";
   isRewatch: boolean;
   createdAt: string;
+};
+
+export type Review = {
+  id: string;
+  movieId: number;
+  body: string;
+  visibility: "private" | "public";
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FavoriteFilm = {
+  movieId: number;
+  position: number;
+  addedAt: string;
 };
 
 export type RankedFilm = {
@@ -88,8 +116,11 @@ export type RankHistoryRecord = {
 
 export type AppState = {
   diary: DiaryEntry[];
+  reviews: Review[];
   ranked: RankedFilm[];
   watchlist: WatchlistItem[];
+  likedMovieIds?: number[];
+  favorites?: FavoriteFilm[];
   movieCache?: Movie[];
   comparisons?: ComparisonRecord[];
   rankHistory?: RankHistoryRecord[];

@@ -52,3 +52,29 @@ test("rejects malformed nested local snapshots", () => {
   assert.equal(localState.parseLocalState(JSON.stringify(malformedMovie)), null);
   assert.equal(localState.parseLocalState("{not json"), null);
 });
+
+test("round-trips likes, favorites, spoiler flags, and diary tags", () => {
+  const state = {
+    ...empty,
+    likedMovieIds: [42],
+    favorites: [{ movieId: 42, position: 1, addedAt: "2026-07-17T12:00:00.000Z" }],
+    diary: [{
+      id: "watch-42",
+      movieId: 42,
+      watchedOn: "2026-07-17",
+      note: "The ending works.",
+      containsSpoilers: true,
+      tags: ["with-mom", "summer-marathon"],
+      visibility: "private",
+      completionStatus: "completed",
+      rankingStatus: "complete",
+      isRewatch: false,
+      createdAt: "2026-07-17T12:00:00.000Z",
+    }],
+  };
+  const parsed = localState.parseLocalState(localState.serializeLocalState(state));
+  assert.deepEqual(parsed.likedMovieIds, [42]);
+  assert.equal(parsed.favorites[0].position, 1);
+  assert.equal(parsed.diary[0].containsSpoilers, true);
+  assert.deepEqual(parsed.diary[0].tags, ["with-mom", "summer-marathon"]);
+});

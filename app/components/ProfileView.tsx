@@ -46,6 +46,8 @@ export function ProfileView({
   onFilm,
   onSettings,
   onSignIn,
+  onStats,
+  onExport,
 }: {
   profile: ConnectedSupabase["profile"] | null;
   state: AppState;
@@ -55,12 +57,18 @@ export function ProfileView({
   onFilm: (movie: Movie) => void;
   onSettings: () => void;
   onSignIn: () => void;
+  onStats: () => void;
+  onExport: (format: "json" | "csv") => void;
 }) {
   const diary = sortDiary(state.diary);
   const topThree = signedOut
     ? movies.slice(0, 3).map((movie, index) => ({ movie, rank: index + 1 }))
     : canon.slice(0, 3);
   const featured = topThree[0]?.movie ?? (diary[0] ? movieById(diary[0].movieId) : movies[0]);
+  const favoriteMovies = (state.favorites ?? [])
+    .slice()
+    .sort((left, right) => left.position - right.position)
+    .map((favorite) => movieById(favorite.movieId));
   const profileTasteRead = topThree.length === 3 ? tasteRead(topThree) : null;
   const tasteDecades = new Set(topThree.map((row) => Math.floor(row.movie.year / 10) * 10)).size;
   const tasteDirectors = new Set(topThree.map((row) => row.movie.director)).size;
@@ -73,7 +81,7 @@ export function ProfileView({
         {featured.backdrop ? <img src={featured.backdrop} alt="" /> : null}
         <div className="profile-page-shade" />
         <div className="profile-page-hero-content content-wrap">
-          <div className="profile-page-avatar">{displayName.slice(0, 1).toUpperCase()}</div>
+          <div className="profile-page-avatar">{profile?.avatarUrl ? <img src={profile.avatarUrl} alt="" /> : displayName.slice(0, 1).toUpperCase()}</div>
           <div className="profile-page-identity">
             <h1>{displayName}</h1>
             <span>@{username}{!signedOut && !profile?.isPublic ? <span className="privacy-lock" title="Private profile"><LockIcon /><span className="sr-only">Private profile</span></span> : null}</span>
@@ -87,6 +95,7 @@ export function ProfileView({
             ) : (
               <span className="quiet-copy">Stored on this device</span>
             )}
+            {!signedOut ? <button className="secondary-action" onClick={onStats}>Stats &amp; year in review</button> : null}
           </div>
           <dl className="profile-page-stats">
             <div><dt>Ranked</dt><dd>{signedOut ? "—" : canon.length}</dd></div>
@@ -97,9 +106,20 @@ export function ProfileView({
       </section>
 
       <div className="profile-page-body content-wrap">
+        {!signedOut ? (
+          <section className="profile-favorites-block">
+            <div className="section-heading"><h2>My four</h2><span className="section-note">Picked by you, not the ranking</span></div>
+            {favoriteMovies.length ? (
+              <div className="profile-favorites-grid">
+                {favoriteMovies.map((movie) => <button key={movie.id} onClick={() => onFilm(movie)}><PosterArt movie={movie} /><span><strong>{movie.title}</strong><small>{movie.year}</small></span></button>)}
+                {Array.from({ length: Math.max(0, 4 - favoriteMovies.length) }, (_, index) => <div className="favorite-placeholder" key={index}><span>☆</span><small>Add from any film page</small></div>)}
+              </div>
+            ) : <p className="quiet-copy">Mark up to four films as favorites from their film pages. This shelf is yours to curate.</p>}
+          </section>
+        ) : null}
         <section className="profile-top-three-block">
           <div className="section-heading">
-            <h2>Top three</h2>
+            <h2>Top three</h2><span className="section-note">Automatically derived from your ranking</span>
           </div>
           {topThree.length ? (
             <div className="profile-top-three-layout">
@@ -143,6 +163,10 @@ export function ProfileView({
             <p className="quiet-copy">Your latest watches will live here.</p>
           )}
         </section>
+        {!signedOut ? <section className="profile-export">
+          <div><span>Your data</span><h2>Take it with you.</h2><p>Your diary is yours. Download a complete portable copy at any time.</p></div>
+          <div><button className="secondary-action" onClick={() => onExport("json")}>Download JSON</button><button className="secondary-action" onClick={() => onExport("csv")}>Download CSV</button></div>
+        </section> : null}
       </div>
     </div>
   );

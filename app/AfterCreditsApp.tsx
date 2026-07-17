@@ -13,18 +13,26 @@ import {
 import { cacheMovies, initialState, movieById, movies } from "@/lib/seed";
 import { movieSimilarity } from "@/lib/similarity";
 import { parseLocalState, safelyWriteLocalState, serializeLocalState } from "@/lib/local-state";
+import { exportUserData } from "@/lib/export";
+import { defaultDiscoveryFilters, type DiscoveryFilters } from "@/lib/tmdb/discovery";
 import {
   beginRankingRecord,
   commitRankingRecord,
+  deleteWatchEntry,
   insertWatchEntry,
   loadPublicProfileByUsername,
   loadPublicProfileState,
   recordRankingAnswer,
   resumeRankingRecord,
+  saveReviewRecord,
   searchPublicProfiles,
+  setFavoriteFilm,
+  setFilmLike,
   setWatchlistItem,
   undoRankingAnswer,
   updateProfile,
+  updateWatchEntry,
+  uploadProfileAvatar,
   type PublicProfile,
   type PublicProfileState,
 } from "@/lib/supabase/data";
@@ -34,7 +42,6 @@ import {
   insertionPosition,
   isAbandonedSession,
   isValidLocalDate,
-  monthKey,
   readableError,
   sortBucket,
   sortDiary,
@@ -46,8 +53,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import SupabaseGate, { type ConnectedSupabase } from "./SupabaseGate";
 import { CanonView } from "./components/CanonView";
 import { DiaryView } from "./components/DiaryView";
+import type { DiaryEntryUpdate } from "./components/DiaryEntrySheet";
 import { FilmDetail } from "./components/FilmDetail";
 import { HomeView } from "./components/HomeView";
+import { InsightsView } from "./components/InsightsView";
 import { Landing } from "./components/Landing";
 import {
   emptyDraft,
@@ -66,7 +75,30 @@ const PENDING_LOG_KEY = "after-credits-pending-log-v1";
 const SIDEBAR_KEY = "after-credits-sidebar-collapsed";
 const IMPORT_PROGRESS_KEY = "post-credits-import-progress-v1";
 
-const views: View[] = ["home", "diary", "canon", "watchlist", "search", "profile"];
+const views: View[] = ["home", "diary", "canon", "stats", "watchlist", "search", "profile"];
+
+export type DiscoveryFilter = {
+  type: "director" | "cast" | "genre" | "keyword";
+  id: number;
+  label: string;
+};
+
+function normalizeTags(value: string): string[] {
+  return [...new Set(value.split(",").map((tag) => tag.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "")).filter(Boolean))].slice(0, 10);
+}
+
+function recomputeLocalRewatches(entries: DiaryEntry[]): DiaryEntry[] {
+  const completedByMovie = new Map<number, DiaryEntry[]>();
+  entries.filter((entry) => entry.completionStatus === "completed").forEach((entry) => {
+    completedByMovie.set(entry.movieId, [...(completedByMovie.get(entry.movieId) ?? []), entry]);
+  });
+  const rewatchIds = new Set<string>();
+  completedByMovie.forEach((movieEntries) => movieEntries
+    .sort((left, right) => left.watchedOn.localeCompare(right.watchedOn) || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+    .slice(1)
+    .forEach((entry) => rewatchIds.add(entry.id)));
+  return entries.map((entry) => ({ ...entry, isRewatch: rewatchIds.has(entry.id) }));
+}
 
 function viewFromLocation(): View {
   const candidate = new URLSearchParams(window.location.search).get("view");
@@ -104,6 +136,7 @@ const viewLabels: Record<View, string> = {
   home: "Home",
   diary: "Diary",
   canon: "Ranking",
+  stats: "Stats",
   watchlist: "Watchlist",
   search: "Search",
   profile: "Profile",
@@ -151,9 +184,9 @@ function AfterCreditsCore({
   const [view, setView] = useState<View>("home");
   const [selectedFilm, setSelectedFilm] = useState<Movie | null>(null);
   const [log, setLog] = useState<LogDraft | null>(null);
-  const [canonQuery, setCanonQuery] = useState("");
-  const [canonVerdict, setCanonVerdict] = useState<"all" | Verdict>("all");
   const [discoveryQuery, setDiscoveryQuery] = useState("");
+  const [discoveryFilter, setDiscoveryFilter] = useState<DiscoveryFilter | null>(null);
+  const [discoveryFilters, setDiscoveryFilters] = useState<DiscoveryFilters>(defaultDiscoveryFilters);
   const [discoveryMovies, setDiscoveryMovies] = useState<{
     query: string;
     results: Movie[];
@@ -167,6 +200,7 @@ function AfterCreditsCore({
   }>({ query: "", results: [] });
   const [peopleBusy, setPeopleBusy] = useState(false);
   const [selectedPublicProfile, setSelectedPublicProfile] = useState<PublicProfileState | null>(null);
+  const [publicFilmContext, setPublicFilmContext] = useState<PublicProfileState | null>(null);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [quickSearchOpen, setQuickSearchOpen] = useState(false);
@@ -544,7 +578,8 @@ function AfterCreditsCore({
   useEffect(() => {
     const query = discoveryQuery.trim();
     const generation = ++discoveryGeneration.current;
-    if ((view !== "search" && !quickSearchOpen) || query.length < 2) {
+    const browseActive = view === "search" && !quickSearchOpen && !discoveryFilter && query.length < 2;
+    if ((view !== "search" && !quickSearchOpen) || (query.length < 2 && !browseActive)) {
       queueMicrotask(() => {
         if (generation !== discoveryGeneration.current) return;
         setDiscoveryMovieBusy(false);
@@ -557,7 +592,13 @@ function AfterCreditsCore({
       setDiscoveryMovieBusy(true);
       setDiscoveryMovies({ query: query.toLowerCase(), results: [], error: "" });
       try {
-        const response = await fetch(`/api/tmdb/search?q=${encodeURIComponent(query)}`, {
+        const filterParams = discoveryFilter
+          ? `&type=${encodeURIComponent(discoveryFilter.type)}&id=${discoveryFilter.id}`
+          : "";
+        const browseParams = browseActive
+          ? `&genre=${encodeURIComponent(discoveryFilters.genre)}&decade=${encodeURIComponent(discoveryFilters.decade)}&sort=${encodeURIComponent(discoveryFilters.sort)}`
+          : "";
+        const response = await fetch(`/api/tmdb/search?q=${encodeURIComponent(query)}${filterParams}${browseParams}`, {
           signal: controller.signal,
         });
         const payload = (await response.json()) as { results?: Movie[]; error?: string };
@@ -576,7 +617,7 @@ function AfterCreditsCore({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [discoveryQuery, quickSearchOpen, view]);
+  }, [discoveryFilter, discoveryFilters, discoveryQuery, quickSearchOpen, view]);
 
   const diary = useMemo(() => sortDiary(state.diary), [state.diary]);
   const canon = useMemo(() => canonFromState(state), [state]);
@@ -603,21 +644,6 @@ function AfterCreditsCore({
     };
   }, [completedDiary]);
 
-  const diaryGroups = useMemo(() => {
-    const groups = new Map<string, DiaryEntry[]>();
-    diary.forEach((entry) => {
-      const key = monthKey(entry.watchedOn);
-      groups.set(key, [...(groups.get(key) ?? []), entry]);
-    });
-    return [...groups.entries()];
-  }, [diary]);
-
-  const visibleCanon = canon.filter((row) => {
-    const verdictMatches = canonVerdict === "all" || row.ranked.verdict === canonVerdict;
-    const queryMatches = row.movie.title.toLowerCase().includes(canonQuery.toLowerCase());
-    return verdictMatches && queryMatches;
-  });
-
   function updateDraft(update: Partial<LogDraft>) {
     setLog((current) => (current ? { ...current, ...update } : current));
   }
@@ -637,12 +663,24 @@ function AfterCreditsCore({
     isPublic: boolean;
     isDiscoverable: boolean;
     defaultNoteVisibility: "private" | "public";
+    avatarFile: File | null;
+    removeAvatar: boolean;
   }) {
     if (!connection) return;
     runConnected(async () => {
+      const avatarUrl = input.avatarFile
+        ? await uploadProfileAvatar(connection.client, connection.userId, input.avatarFile)
+        : input.removeAvatar
+          ? null
+          : activeProfile?.avatarUrl ?? null;
       const profile = await updateProfile(connection.client, {
         userId: connection.userId,
-        ...input,
+        displayName: input.displayName,
+        bio: input.bio,
+        isPublic: input.isPublic,
+        isDiscoverable: input.isDiscoverable,
+        defaultNoteVisibility: input.defaultNoteVisibility,
+        avatarUrl,
       });
       setActiveProfile(profile);
       setProfileOpen(false);
@@ -698,6 +736,8 @@ function AfterCreditsCore({
             watchedOn: entry.watchedOn,
             note: entry.note,
             visibility: entry.visibility,
+            containsSpoilers: Boolean(entry.containsSpoilers),
+            tags: entry.tags ?? [],
             dnf: entry.completionStatus === "dnf",
             importKey: entry.id,
           });
@@ -715,6 +755,20 @@ function AfterCreditsCore({
           userId: connection.userId,
           movie: movieFor(item.movieId),
           shouldAdd: true,
+        });
+      }
+      for (const movieId of importOffer.likedMovieIds ?? []) {
+        await setFilmLike(connection.client, {
+          userId: connection.userId,
+          movie: movieFor(movieId),
+          shouldLike: true,
+        });
+      }
+      for (const favorite of importOffer.favorites ?? []) {
+        await setFavoriteFilm(connection.client, {
+          userId: connection.userId,
+          movie: movieFor(favorite.movieId),
+          position: favorite.position,
         });
       }
       await refreshConnectedState();
@@ -800,6 +854,8 @@ function AfterCreditsCore({
       entryId: entry?.id ?? null,
       watchedOn: entry?.watchedOn ?? todayLocal(),
       note: entry?.note ?? "",
+      containsSpoilers: Boolean(entry?.containsSpoilers),
+      tags: (entry?.tags ?? []).join(", "),
       visibility: entry?.visibility ?? "private",
       step:
         session.status === "complete" ||
@@ -902,6 +958,8 @@ function AfterCreditsCore({
         entryId: entry.id,
         watchedOn: entry.watchedOn,
         note: entry.note,
+        containsSpoilers: Boolean(entry.containsSpoilers),
+        tags: (entry.tags ?? []).join(", "),
         visibility: entry.visibility,
         step: "verdict",
       });
@@ -929,6 +987,8 @@ function AfterCreditsCore({
       entryId: entry.id,
       watchedOn: entry.watchedOn,
       note: entry.note,
+      containsSpoilers: Boolean(entry.containsSpoilers),
+      tags: (entry.tags ?? []).join(", "),
       visibility: entry.visibility,
       step:
         session.status === "complete"
@@ -965,6 +1025,8 @@ function AfterCreditsCore({
           watchedOn: draft.watchedOn,
           note: draft.note,
           visibility: draft.visibility,
+          containsSpoilers: draft.containsSpoilers,
+          tags: normalizeTags(draft.tags),
           dnf,
         });
         await refreshConnectedState();
@@ -996,6 +1058,8 @@ function AfterCreditsCore({
       movieId: log.movie.id,
       watchedOn: log.watchedOn,
       note: log.note.trim(),
+      containsSpoilers: log.containsSpoilers,
+      tags: normalizeTags(log.tags),
       visibility: log.visibility,
       completionStatus: dnf ? "dnf" : "completed",
       rankingStatus: dnf
@@ -1575,6 +1639,160 @@ function AfterCreditsCore({
     writeAuthoritativeState(applyOptimisticState(readAuthoritativeState(), shouldAdd));
   }
 
+  function toggleLike(movie: Movie) {
+    if (requireSignIn()) return;
+    const shouldLike = !(state.likedMovieIds ?? []).includes(movie.id);
+    const apply = (current: AppState, liked: boolean): AppState => ({
+      ...current,
+      likedMovieIds: liked
+        ? [...new Set([...(current.likedMovieIds ?? []), movie.id])]
+        : (current.likedMovieIds ?? []).filter((id) => id !== movie.id),
+    });
+    if (connection) setState((current) => apply(current, shouldLike));
+    if (connection) {
+      runConnected(async () => {
+        try {
+          await setFilmLike(connection.client, { userId: connection.userId, movie, shouldLike });
+          await refreshConnectedState();
+        } catch (error) {
+          setState((current) => apply(current, !shouldLike));
+          throw error;
+        }
+      });
+      return;
+    }
+    writeAuthoritativeState(apply(readAuthoritativeState(), shouldLike));
+  }
+
+  function toggleFavorite(movie: Movie) {
+    if (requireSignIn()) return;
+    const currentFavorites = state.favorites ?? [];
+    const existing = currentFavorites.find((item) => item.movieId === movie.id);
+    if (!existing && currentFavorites.length >= 4) {
+      setOperationError("Your favorites are full. Remove one before adding another.");
+      return;
+    }
+    const position = existing
+      ? null
+      : [1, 2, 3, 4].find((candidate) => !currentFavorites.some((item) => item.position === candidate)) ?? null;
+    const apply = (current: AppState, nextPosition: number | null): AppState => ({
+      ...current,
+      favorites: nextPosition === null
+        ? (current.favorites ?? []).filter((item) => item.movieId !== movie.id)
+        : [...(current.favorites ?? []).filter((item) => item.movieId !== movie.id), {
+            movieId: movie.id,
+            position: nextPosition,
+            addedAt: new Date().toISOString(),
+          }].sort((left, right) => left.position - right.position),
+    });
+    if (connection) setState((current) => apply(current, position));
+    if (connection) {
+      runConnected(async () => {
+        try {
+          await setFavoriteFilm(connection.client, { userId: connection.userId, movie, position });
+          await refreshConnectedState();
+        } catch (error) {
+          setState((current) => apply(current, existing?.position ?? null));
+          throw error;
+        }
+      });
+      return;
+    }
+    writeAuthoritativeState(apply(readAuthoritativeState(), position));
+  }
+
+  function saveReview(movie: Movie, body: string, visibility: "private" | "public") {
+    if (requireSignIn()) return;
+    const normalized = body.trim();
+    if (connection) {
+      runConnected(async () => {
+        await saveReviewRecord(connection.client, {
+          userId: connection.userId,
+          movie,
+          body: normalized,
+          visibility,
+        });
+        await refreshConnectedState();
+      });
+      return;
+    }
+    const now = new Date().toISOString();
+    const current = readAuthoritativeState();
+    const existing = current.reviews.find((review) => review.movieId === movie.id);
+    writeAuthoritativeState({
+      ...current,
+      reviews: normalized
+        ? [
+            ...current.reviews.filter((review) => review.movieId !== movie.id),
+            {
+              id: existing?.id ?? `local-review-${movie.id}`,
+              movieId: movie.id,
+              body: normalized,
+              visibility,
+              createdAt: existing?.createdAt ?? now,
+              updatedAt: now,
+            },
+          ]
+        : current.reviews.filter((review) => review.movieId !== movie.id),
+    });
+  }
+
+  function editDiaryEntry(entry: DiaryEntry, update: DiaryEntryUpdate) {
+    const tags = normalizeTags(update.tags);
+    if (connection) {
+      runConnected(async () => {
+        await updateWatchEntry(connection.client, {
+          entryId: entry.id,
+          watchedOn: update.watchedOn,
+          note: update.note,
+          visibility: update.visibility,
+          containsSpoilers: update.containsSpoilers,
+          tags,
+        });
+        await refreshConnectedState();
+      });
+      return;
+    }
+    const current = readAuthoritativeState();
+    writeAuthoritativeState({
+      ...current,
+      diary: recomputeLocalRewatches(current.diary.map((item) => item.id === entry.id ? {
+        ...item,
+        watchedOn: update.watchedOn,
+        note: update.note.trim(),
+        visibility: update.visibility,
+        containsSpoilers: update.containsSpoilers,
+        tags,
+      } : item)),
+    });
+  }
+
+  function removeDiaryEntry(entry: DiaryEntry, removeFromCanon: boolean) {
+    if (connection) {
+      runConnected(async () => {
+        await deleteWatchEntry(connection.client, { entryId: entry.id, removeFromCanon });
+        await refreshConnectedState();
+      });
+      return;
+    }
+    const current = readAuthoritativeState();
+    writeAuthoritativeState({
+      ...current,
+      diary: recomputeLocalRewatches(current.diary.filter((item) => item.id !== entry.id)),
+      ranked: removeFromCanon ? current.ranked.filter((item) => item.movieId !== entry.movieId) : current.ranked,
+    });
+  }
+
+  function openDiscovery(filter: DiscoveryFilter) {
+    removeFilmFromLocation();
+    setSelectedFilm(null);
+    setDiscoveryFilter(filter);
+    setDiscoveryQuery(filter.label);
+    if (viewFromLocation() !== "search") window.history.pushState(null, "", urlForView("search"));
+    setView("search");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   function openView(next: View) {
     setQuickSearchOpen(false);
     setSelectedFilm(null);
@@ -1616,7 +1834,21 @@ function AfterCreditsCore({
     setSelectedFilm(movie);
   }
 
+  function openPublicProfileFilm(movie: Movie) {
+    const context = selectedPublicProfile;
+    setSelectedPublicProfile(null);
+    openFilm(movie);
+    setPublicFilmContext(context);
+  }
+
   function closeFilm() {
+    if (publicFilmContext) {
+      removeFilmFromLocation();
+      setSelectedFilm(null);
+      setSelectedPublicProfile(publicFilmContext);
+      setPublicFilmContext(null);
+      return;
+    }
     if (filmIdFromLocation() && window.history.state?.afterCreditsFilm) {
       window.history.back();
       return;
@@ -1627,7 +1859,9 @@ function AfterCreditsCore({
 
   const discoveryMovieResults = useMemo(() => {
     const query = discoveryQuery.trim().toLowerCase();
-    if (query.length < 2) return [];
+    const browsing = view === "search" && !discoveryFilter && query.length < 2;
+    if (query.length < 2 && !browsing) return [];
+    if (browsing) return discoveryMovies.results.slice(0, 12);
     const results = movies.filter(
       (movie) => movie.title.toLowerCase().includes(query) || movie.director.toLowerCase().includes(query),
     );
@@ -1637,7 +1871,7 @@ function AfterCreditsCore({
       });
     }
     return results.slice(0, 12);
-  }, [discoveryMovies, discoveryQuery]);
+  }, [discoveryFilter, discoveryMovies, discoveryQuery, view]);
 
   const normalizedDiscoveryQuery = discoveryQuery.trim().toLowerCase();
   const discoveryReady = normalizedDiscoveryQuery.length >= 2;
@@ -1651,6 +1885,8 @@ function AfterCreditsCore({
   const peopleSearchPending = discoveryReady && profilesAvailable && (
     peopleBusy || peopleSearch.query !== normalizedDiscoveryQuery
   );
+  const selectedFilmState = publicFilmContext?.state ?? state;
+  const selectedFilmCanon = publicFilmContext ? canonFromState(publicFilmContext.state) : canon;
 
   return (
     <div className={`app-shell${publicMode ? " public-shell" : ""}${sidebarCollapsed ? " sidebar-collapsed" : ""}${sidebarTransitioning ? " sidebar-transitioning" : ""}`} aria-busy={operationBusy}>
@@ -1665,7 +1901,7 @@ function AfterCreditsCore({
           </button>
         </div>
         <nav className="desktop-nav" aria-label="Primary navigation">
-          {(["home", "diary", "canon", "watchlist", "search"] as View[]).map((item) => (
+          {(["home", "diary", "canon", "stats", "watchlist", "search"] as View[]).map((item) => (
             <button
               key={item}
               className={view === item ? "active" : ""}
@@ -1718,8 +1954,10 @@ function AfterCreditsCore({
                 title={connection && activeProfile ? `@${activeProfile.username}` : "Local device"}
                 onClick={() => setAccountMenuOpen((open) => !open)}
               >
-                <span className="icon-button" aria-hidden="true">
-                  {connection && activeProfile
+                <span className="icon-button" aria-hidden="true" style={activeProfile?.avatarUrl ? { backgroundImage: `url(${activeProfile.avatarUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}>
+                  {connection && activeProfile?.avatarUrl
+                    ? ""
+                    : connection && activeProfile
                     ? (activeProfile.displayName || activeProfile.username)
                         .split(/\s+/)
                         .slice(0, 2)
@@ -1764,7 +2002,11 @@ function AfterCreditsCore({
           profileBusy={peopleSearchPending}
           movieError={discoveryMovies.query === discoveryQuery.trim().toLowerCase() ? discoveryMovies.error : ""}
           profilesAvailable={profilesAvailable}
-          onQuery={setDiscoveryQuery}
+          filterLabel={discoveryFilter?.label}
+          filters={discoveryFilters}
+          browseActive={false}
+          onFilters={setDiscoveryFilters}
+          onQuery={(value) => { setDiscoveryFilter(null); setDiscoveryQuery(value); }}
           onFilm={openDiscoveredFilm}
           onProfile={(profile) => { setQuickSearchOpen(false); openPublicProfile(profile); }}
           onClose={() => setQuickSearchOpen(false)}
@@ -1809,27 +2051,27 @@ function AfterCreditsCore({
 
         {view === "diary" ? (
           <DiaryView
-            groups={diaryGroups}
+            entries={diary}
             state={state}
             canon={canon}
+            busy={operationBusy}
             onFilm={openFilm}
             onLog={openLogger}
+            onUpdateEntry={editDiaryEntry}
+            onDeleteEntry={removeDiaryEntry}
           />
         ) : null}
 
         {view === "canon" ? (
           <CanonView
-            rows={visibleCanon}
-            total={canon.length}
+            rows={canon}
             diary={state.diary}
-            query={canonQuery}
-            verdict={canonVerdict}
-            onQuery={setCanonQuery}
-            onVerdict={setCanonVerdict}
             onFilm={openFilm}
             onLog={openLogger}
           />
         ) : null}
+
+        {view === "stats" ? <InsightsView state={state} canon={canon} onFilm={openFilm} /> : null}
 
         {view === "watchlist" ? (
           <WatchlistView
@@ -1849,7 +2091,11 @@ function AfterCreditsCore({
             profileBusy={peopleSearchPending}
             movieError={discoveryMovies.query === discoveryQuery.trim().toLowerCase() ? discoveryMovies.error : ""}
             profilesAvailable={profilesAvailable}
-            onQuery={setDiscoveryQuery}
+            filterLabel={discoveryFilter?.label}
+            filters={discoveryFilters}
+            browseActive={!discoveryFilter && discoveryQuery.trim().length < 2}
+            onFilters={setDiscoveryFilters}
+            onQuery={(value) => { setDiscoveryFilter(null); setDiscoveryQuery(value); }}
             onFilm={openDiscoveredFilm}
             onProfile={openPublicProfile}
           />
@@ -1865,12 +2111,14 @@ function AfterCreditsCore({
             onFilm={openFilm}
             onSettings={() => connection ? setProfileOpen(true) : undefined}
             onSignIn={() => onSignIn?.()}
+            onStats={() => openView("stats")}
+            onExport={(format) => exportUserData(activeProfile, state, format)}
           />
         ) : null}
       </main>
 
       <nav className="mobile-nav" aria-label="Mobile navigation">
-        {(["home", "diary", "canon", "watchlist", "profile"] as View[]).map((item) => (
+        {(["home", "diary", "canon", "stats", "watchlist", "profile"] as View[]).map((item) => (
           <button
             key={item}
             className={view === item ? "active" : ""}
@@ -1887,12 +2135,19 @@ function AfterCreditsCore({
         <FilmDetail
           key={selectedFilm.id}
           movie={selectedFilm}
-          state={state}
-          canon={canon}
+          state={selectedFilmState}
+          canon={selectedFilmCanon}
           onClose={closeFilm}
           onLog={() => openMovieLogger(selectedFilm)}
           onRerank={() => startManualRerank(selectedFilm)}
           onWatchlist={() => toggleWatchlist(selectedFilm.id)}
+          onLike={() => toggleLike(selectedFilm)}
+          onFavorite={() => toggleFavorite(selectedFilm)}
+          onDiscover={openDiscovery}
+          onOpenFilm={openFilm}
+          onSaveReview={saveReview}
+          readOnly={publicMode || Boolean(publicFilmContext)}
+          profileLabel={publicFilmContext?.profile.displayName}
         />
       ) : null}
 
@@ -1929,7 +2184,7 @@ function AfterCreditsCore({
         />
       ) : null}
       {selectedPublicProfile ? (
-        <PublicProfileSheet data={selectedPublicProfile} onClose={() => setSelectedPublicProfile(null)} onFilm={(movie) => { setSelectedPublicProfile(null); openFilm(movie); }} />
+        <PublicProfileSheet data={selectedPublicProfile} onClose={() => setSelectedPublicProfile(null)} onFilm={openPublicProfileFilm} />
       ) : null}
       {profileOpen && connection && activeProfile ? (
         <ProfileSheet

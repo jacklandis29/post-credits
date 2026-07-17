@@ -79,3 +79,18 @@ test("bounded JSON parsing rejects oversized and non-object bodies", async () =>
   });
   assert.deepEqual(await requestReader.readBoundedJsonObject(valid, 32), { value: "ok" });
 });
+
+test("personal-expression tables and avatar uploads stay owner-scoped", async () => {
+  const migration = await readFile(
+    new URL("../supabase/migrations/20260717160743_add_social_diary_details.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(migration, /alter table public\.film_likes enable row level security/);
+  assert.match(migration, /alter table public\.profile_favorites enable row level security/);
+  assert.match(migration, /user_id = \(select auth\.uid\(\)\)/);
+  assert.match(migration, /avatars_insert_own_folder/);
+  assert.match(migration, /avatars_select_own_folder/);
+  assert.match(migration, /avatars_delete_own_folder/);
+  assert.match(migration, /file_size_limit[\s\S]*5242880/);
+  assert.doesNotMatch(migration, /service_role/);
+});
