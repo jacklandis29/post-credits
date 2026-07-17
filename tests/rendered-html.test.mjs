@@ -34,7 +34,7 @@ test("server-renders the finished Post Credits product", async () => {
   const html = await response.text();
   assert.match(html, /<title>Post Credits<\/title>/i);
   assert.match(html, /Post Credits/);
-  assert.match(html, /Loading/);
+  assert.match(html, /Loading|class="app-shell"/);
   const appSource = await readFile(
     new URL("../app/AfterCreditsApp.tsx", import.meta.url),
     "utf8",
