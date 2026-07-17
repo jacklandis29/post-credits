@@ -24,7 +24,13 @@ import {
 import type { AppState } from "@/lib/types";
 import { Turnstile } from "./components/Turnstile";
 
-const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
+// Turnstile site keys are public by design. Keep the production key in the
+// bundle so archive-based deployments cannot omit it when runtime variables
+// are applied after the client build has already been created.
+const productionTurnstileSiteKey = "0x4AAAAAAD3eZHzFRTKGEf-A";
+const turnstileSiteKey =
+  process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ||
+  (process.env.NODE_ENV === "production" ? productionTurnstileSiteKey : "");
 
 export type ConnectedSupabase = {
   client: SupabaseClient;
