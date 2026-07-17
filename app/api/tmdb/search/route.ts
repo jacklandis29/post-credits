@@ -1,5 +1,6 @@
 import { beginTmdbRequest, tmdbRequestIdentity } from "@/lib/tmdb/limit";
 import { logServerError } from "@/lib/server/log";
+import { TMDB_GENRES } from "@/lib/tmdb/discovery";
 
 const TMDB_ORIGIN = "https://api.themoviedb.org/3";
 const IMAGE_ORIGIN = "https://image.tmdb.org/t/p";
@@ -13,6 +14,8 @@ type TmdbMovie = {
   backdrop_path?: string | null;
   overview?: string;
   adult?: boolean;
+  genre_ids?: number[];
+  popularity?: number;
 };
 
 type TmdbSearchResponse = {
@@ -53,9 +56,17 @@ async function tmdbFetch(url: URL, attempt = 0): Promise<Response> {
 }
 
 export async function GET(request: Request) {
-  const query = new URL(request.url).searchParams.get("q")?.trim() ?? "";
-  if (query.length < 2 || query.length > 120) {
-    return response({ results: [] }, query.length > 120 ? 400 : 200);
+  const parameters = new URL(request.url).searchParams;
+  const query = parameters.get("q")?.trim() ?? "";
+  const genreValue = parameters.get("genre") ?? "all";
+  const decadeValue = parameters.get("decade") ?? "all";
+  const sort = parameters.get("sort") === "newest" ? "newest" : "popularity";
+  const genreId = genreValue === "all" ? null : Number(genreValue);
+  const decade = decadeValue === "all" ? null : Number(decadeValue);
+  const validGenre = genreId === null || TMDB_GENRES.some((genre) => genre.id === genreId);
+  const validDecade = decade === null || (Number.isInteger(decade) && decade >= 1900 && decade <= 2020 && decade % 10 === 0);
+  if (query.length > 120 || (query.length > 0 && query.length < 2) || !validGenre || !validDecade) {
+    return response({ results: [] }, query.length > 120 || !validGenre || !validDecade ? 400 : 200);
   }
   const release = beginTmdbRequest(
     `search:${tmdbRequestIdentity(request)}`,
@@ -70,8 +81,15 @@ export async function GET(request: Request) {
   }
 
   try {
-    const url = new URL(`${TMDB_ORIGIN}/search/movie`);
-    url.searchParams.set("query", query);
+    const url = new URL(`${TMDB_ORIGIN}/${query ? "search/movie" : "discover/movie"}`);
+    if (query) url.searchParams.set("query", query);
+    else {
+      url.searchParams.set("sort_by", sort === "newest" ? "primary_release_date.desc" : "popularity.desc");
+      url.searchParams.set("vote_count.gte", "25");
+      url.searchParams.set("primary_release_date.lte", new Date().toISOString().slice(0, 10));
+      if (genreId !== null) url.searchParams.set("with_genres", String(genreId));
+      if (decade !== null) { url.searchParams.set("primary_release_date.gte", `${decade}-01-01`); url.searchParams.set("primary_release_date.lte", `${decade + 9}-12-31`); }
+    }
     url.searchParams.set("include_adult", "false");
     url.searchParams.set("language", "en-US");
     url.searchParams.set("page", "1");
@@ -102,7 +120,10 @@ export async function GET(request: Request) {
     const payload = (await upstream.json()) as TmdbSearchResponse;
     const results = (payload.results ?? [])
       .filter((movie) => !movie.adult)
-      .slice(0, 8)
+      .filter((movie) => genreId === null || movie.genre_ids?.includes(genreId))
+      .filter((movie) => { const year = Number(movie.release_date?.slice(0, 4)); return decade === null || (year >= decade && year <= decade + 9); })
+      .sort((left, right) => sort === "newest" ? (right.release_date ?? "").localeCompare(left.release_date ?? "") : (right.popularity ?? 0) - (left.popularity ?? 0))
+      .slice(0, 16)
       .map((movie) => ({
         id: movie.id,
         title: movie.title,
@@ -111,7 +132,7 @@ export async function GET(request: Request) {
         releaseDate: movie.release_date,
         runtime: null,
         director: "",
-        genres: [],
+        genres: (movie.genre_ids ?? []).map((id) => TMDB_GENRES.find((genre) => genre.id === id)?.name).filter((name) => name !== undefined),
         poster: movie.poster_path
           ? `${IMAGE_ORIGIN}/w500${movie.poster_path}`
           : null,

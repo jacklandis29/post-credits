@@ -620,6 +620,35 @@ export async function insertWatchEntry(
   };
 }
 
+export async function updateWatchEntry(
+  client: SupabaseClient,
+  input: {
+    entryId: string;
+    watchedOn: string;
+    note: string;
+    visibility: DiaryEntry["visibility"];
+  },
+): Promise<void> {
+  const { error } = await client.rpc("update_watch_entry", {
+    p_watch_entry_id: input.entryId,
+    p_watched_on: input.watchedOn,
+    p_note: input.note.trim() || null,
+    p_visibility: input.visibility,
+  });
+  if (error) throw error;
+}
+
+export async function deleteWatchEntry(
+  client: SupabaseClient,
+  input: { entryId: string; removeFromCanon: boolean },
+): Promise<void> {
+  const { error } = await client.rpc("delete_watch_entry", {
+    p_watch_entry_id: input.entryId,
+    p_remove_from_canon: input.removeFromCanon,
+  });
+  if (error) throw error;
+}
+
 export async function setWatchlistItem(
   client: SupabaseClient,
   input: { userId: string; movie: Movie; shouldAdd: boolean },

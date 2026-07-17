@@ -66,3 +66,27 @@ test("production auth is visibly protected and returns to the canonical site", a
   assert.match(confirmation, /\{\{ \.ConfirmationURL \}\}/);
   assert.match(magicLink, /\{\{ \.ConfirmationURL \}\}/);
 });
+
+test("collection browsing and diary correction controls stay wired", async () => {
+  const [app, diary, editor, canon, watchlist, search, data, migration] = await Promise.all([
+    readFile(new URL("../app/AfterCreditsApp.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/DiaryView.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/DiaryEntrySheet.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/CanonView.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/WatchlistView.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/SearchView.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/supabase/data.ts", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/20260717202405_add_watch_entry_mutations.sql", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(app, /onUpdateEntry=\{editDiaryEntry\}/);
+  assert.match(diary, /Jump to diary year/);
+  assert.match(editor, /Delete this diary entry/);
+  assert.match(canon, /Any decade/);
+  assert.match(canon, /Shortest runtime/);
+  assert.match(watchlist, /Pick something for me/);
+  assert.match(search, /All genres/);
+  assert.match(data, /rpc\("update_watch_entry"/);
+  assert.match(data, /rpc\("delete_watch_entry"/);
+  assert.match(migration, /p_remove_from_canon boolean/);
+});

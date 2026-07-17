@@ -16,6 +16,7 @@ import { parseLocalState, safelyWriteLocalState, serializeLocalState } from "@/l
 import {
   beginRankingRecord,
   commitRankingRecord,
+  deleteWatchEntry,
   insertWatchEntry,
   loadPublicProfileByUsername,
   loadPublicProfileState,
@@ -24,17 +25,18 @@ import {
   searchPublicProfiles,
   setWatchlistItem,
   undoRankingAnswer,
+  updateWatchEntry,
   updateProfile,
   type PublicProfile,
   type PublicProfileState,
 } from "@/lib/supabase/data";
+import { defaultDiscoveryFilters, TMDB_GENRES, type DiscoveryFilters } from "@/lib/tmdb/discovery";
 import type { AppState, DiaryEntry, Movie, RankedFilm, Verdict } from "@/lib/types";
 import {
   canonFromState,
   insertionPosition,
   isAbandonedSession,
   isValidLocalDate,
-  monthKey,
   readableError,
   sortBucket,
   sortDiary,
@@ -46,6 +48,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import SupabaseGate, { type ConnectedSupabase } from "./SupabaseGate";
 import { CanonView } from "./components/CanonView";
 import { DiaryView } from "./components/DiaryView";
+import type { DiaryEntryUpdate } from "./components/DiaryEntrySheet";
 import { FilmDetail } from "./components/FilmDetail";
 import { HomeView } from "./components/HomeView";
 import { Landing } from "./components/Landing";
@@ -67,6 +70,14 @@ const SIDEBAR_KEY = "after-credits-sidebar-collapsed";
 const IMPORT_PROGRESS_KEY = "post-credits-import-progress-v1";
 
 const views: View[] = ["home", "diary", "canon", "watchlist", "search", "profile"];
+
+function recomputeLocalRewatches(entries: DiaryEntry[]): DiaryEntry[] {
+  const completedByMovie = new Map<number, DiaryEntry[]>();
+  entries.filter((entry) => entry.completionStatus === "completed").forEach((entry) => completedByMovie.set(entry.movieId, [...(completedByMovie.get(entry.movieId) ?? []), entry]));
+  const rewatchIds = new Set<string>();
+  completedByMovie.forEach((movieEntries) => movieEntries.sort((a, b) => a.watchedOn.localeCompare(b.watchedOn) || a.createdAt.localeCompare(b.createdAt)).slice(1).forEach((entry) => rewatchIds.add(entry.id)));
+  return entries.map((entry) => ({ ...entry, isRewatch: entry.completionStatus === "completed" && rewatchIds.has(entry.id) }));
+}
 
 function viewFromLocation(): View {
   const candidate = new URLSearchParams(window.location.search).get("view");
@@ -151,9 +162,8 @@ function AfterCreditsCore({
   const [view, setView] = useState<View>("home");
   const [selectedFilm, setSelectedFilm] = useState<Movie | null>(null);
   const [log, setLog] = useState<LogDraft | null>(null);
-  const [canonQuery, setCanonQuery] = useState("");
-  const [canonVerdict, setCanonVerdict] = useState<"all" | Verdict>("all");
   const [discoveryQuery, setDiscoveryQuery] = useState("");
+  const [discoveryFilters, setDiscoveryFilters] = useState<DiscoveryFilters>(defaultDiscoveryFilters);
   const [discoveryMovies, setDiscoveryMovies] = useState<{
     query: string;
     results: Movie[];
@@ -544,7 +554,8 @@ function AfterCreditsCore({
   useEffect(() => {
     const query = discoveryQuery.trim();
     const generation = ++discoveryGeneration.current;
-    if ((view !== "search" && !quickSearchOpen) || query.length < 2) {
+    const browsing = view === "search" && query.length === 0;
+    if ((view !== "search" && !quickSearchOpen) || (!browsing && query.length < 2)) {
       queueMicrotask(() => {
         if (generation !== discoveryGeneration.current) return;
         setDiscoveryMovieBusy(false);
@@ -557,7 +568,8 @@ function AfterCreditsCore({
       setDiscoveryMovieBusy(true);
       setDiscoveryMovies({ query: query.toLowerCase(), results: [], error: "" });
       try {
-        const response = await fetch(`/api/tmdb/search?q=${encodeURIComponent(query)}`, {
+        const parameters = new URLSearchParams({ q: query, genre: discoveryFilters.genre, decade: discoveryFilters.decade, sort: discoveryFilters.sort });
+        const response = await fetch(`/api/tmdb/search?${parameters.toString()}`, {
           signal: controller.signal,
         });
         const payload = (await response.json()) as { results?: Movie[]; error?: string };
@@ -576,7 +588,7 @@ function AfterCreditsCore({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [discoveryQuery, quickSearchOpen, view]);
+  }, [discoveryFilters, discoveryQuery, quickSearchOpen, view]);
 
   const diary = useMemo(() => sortDiary(state.diary), [state.diary]);
   const canon = useMemo(() => canonFromState(state), [state]);
@@ -602,21 +614,6 @@ function AfterCreditsCore({
       rewatches: thisYear.filter((entry) => entry.isRewatch).length,
     };
   }, [completedDiary]);
-
-  const diaryGroups = useMemo(() => {
-    const groups = new Map<string, DiaryEntry[]>();
-    diary.forEach((entry) => {
-      const key = monthKey(entry.watchedOn);
-      groups.set(key, [...(groups.get(key) ?? []), entry]);
-    });
-    return [...groups.entries()];
-  }, [diary]);
-
-  const visibleCanon = canon.filter((row) => {
-    const verdictMatches = canonVerdict === "all" || row.ranked.verdict === canonVerdict;
-    const queryMatches = row.movie.title.toLowerCase().includes(canonQuery.toLowerCase());
-    return verdictMatches && queryMatches;
-  });
 
   function updateDraft(update: Partial<LogDraft>) {
     setLog((current) => (current ? { ...current, ...update } : current));
@@ -1575,6 +1572,41 @@ function AfterCreditsCore({
     writeAuthoritativeState(applyOptimisticState(readAuthoritativeState(), shouldAdd));
   }
 
+  function editDiaryEntry(entry: DiaryEntry, update: DiaryEntryUpdate) {
+    if (connection) {
+      runConnected(async () => {
+        await updateWatchEntry(connection.client, { entryId: entry.id, ...update });
+        await refreshConnectedState();
+      });
+      return;
+    }
+    const current = readAuthoritativeState();
+    writeAuthoritativeState({
+      ...current,
+      diary: recomputeLocalRewatches(current.diary.map((item) => item.id === entry.id ? { ...item, watchedOn: update.watchedOn, note: update.note.trim(), visibility: update.visibility } : item)),
+    });
+  }
+
+  function removeDiaryEntry(entry: DiaryEntry, removeFromCanon: boolean) {
+    if (connection) {
+      runConnected(async () => {
+        await deleteWatchEntry(connection.client, { entryId: entry.id, removeFromCanon });
+        await refreshConnectedState();
+      });
+      return;
+    }
+    const current = readAuthoritativeState();
+    if (current.activeRankingEntryId === entry.id) {
+      setOperationError("Finish this entry's ranking before deleting it.");
+      return;
+    }
+    writeAuthoritativeState({
+      ...current,
+      diary: recomputeLocalRewatches(current.diary.filter((item) => item.id !== entry.id)),
+      ranked: removeFromCanon ? current.ranked.filter((item) => item.movieId !== entry.movieId) : current.ranked,
+    });
+  }
+
   function openView(next: View) {
     setQuickSearchOpen(false);
     setSelectedFilm(null);
@@ -1627,20 +1659,26 @@ function AfterCreditsCore({
 
   const discoveryMovieResults = useMemo(() => {
     const query = discoveryQuery.trim().toLowerCase();
-    if (query.length < 2) return [];
-    const results = movies.filter(
-      (movie) => movie.title.toLowerCase().includes(query) || movie.director.toLowerCase().includes(query),
-    );
+    if (query.length < 2) return query.length === 0 && discoveryMovies.query === "" ? discoveryMovies.results.slice(0, 16) : [];
+    const selectedGenre = discoveryFilters.genre === "all" ? null : TMDB_GENRES.find((genre) => String(genre.id) === discoveryFilters.genre)?.name;
+    const selectedDecade = discoveryFilters.decade === "all" ? null : Number(discoveryFilters.decade);
+    const results = movies.filter((movie) => (
+      (movie.title.toLowerCase().includes(query) || movie.director.toLowerCase().includes(query)) &&
+      (!selectedGenre || movie.genres.includes(selectedGenre)) &&
+      (selectedDecade === null || (movie.year >= selectedDecade && movie.year <= selectedDecade + 9))
+    ));
     if (discoveryMovies.query === query) {
       discoveryMovies.results.forEach((movie) => {
         if (!results.some((result) => result.id === movie.id)) results.push(movie);
       });
     }
-    return results.slice(0, 12);
-  }, [discoveryMovies, discoveryQuery]);
+    if (discoveryFilters.sort === "newest") results.sort((left, right) => right.year - left.year);
+    return results.slice(0, 16);
+  }, [discoveryFilters, discoveryMovies, discoveryQuery]);
 
   const normalizedDiscoveryQuery = discoveryQuery.trim().toLowerCase();
-  const discoveryReady = normalizedDiscoveryQuery.length >= 2;
+  const discoveryReady = normalizedDiscoveryQuery.length >= 2 || (view === "search" && normalizedDiscoveryQuery.length === 0);
+  const peopleDiscoveryReady = normalizedDiscoveryQuery.length >= 2;
   const profilesAvailable = Boolean(connection?.client ?? publicClient);
   const visiblePeopleResults = peopleSearch.query === normalizedDiscoveryQuery
     ? peopleSearch.results
@@ -1648,7 +1686,7 @@ function AfterCreditsCore({
   const movieSearchPending = discoveryReady && (
     discoveryMovieBusy || discoveryMovies.query !== normalizedDiscoveryQuery
   );
-  const peopleSearchPending = discoveryReady && profilesAvailable && (
+  const peopleSearchPending = peopleDiscoveryReady && profilesAvailable && (
     peopleBusy || peopleSearch.query !== normalizedDiscoveryQuery
   );
 
@@ -1764,7 +1802,10 @@ function AfterCreditsCore({
           profileBusy={peopleSearchPending}
           movieError={discoveryMovies.query === discoveryQuery.trim().toLowerCase() ? discoveryMovies.error : ""}
           profilesAvailable={profilesAvailable}
+          filters={discoveryFilters}
+          browseActive={false}
           onQuery={setDiscoveryQuery}
+          onFilters={setDiscoveryFilters}
           onFilm={openDiscoveredFilm}
           onProfile={(profile) => { setQuickSearchOpen(false); openPublicProfile(profile); }}
           onClose={() => setQuickSearchOpen(false)}
@@ -1809,23 +1850,21 @@ function AfterCreditsCore({
 
         {view === "diary" ? (
           <DiaryView
-            groups={diaryGroups}
+            entries={diary}
             state={state}
             canon={canon}
+            busy={operationBusy}
             onFilm={openFilm}
             onLog={openLogger}
+            onUpdateEntry={editDiaryEntry}
+            onDeleteEntry={removeDiaryEntry}
           />
         ) : null}
 
         {view === "canon" ? (
           <CanonView
-            rows={visibleCanon}
-            total={canon.length}
+            rows={canon}
             diary={state.diary}
-            query={canonQuery}
-            verdict={canonVerdict}
-            onQuery={setCanonQuery}
-            onVerdict={setCanonVerdict}
             onFilm={openFilm}
             onLog={openLogger}
           />
@@ -1849,7 +1888,10 @@ function AfterCreditsCore({
             profileBusy={peopleSearchPending}
             movieError={discoveryMovies.query === discoveryQuery.trim().toLowerCase() ? discoveryMovies.error : ""}
             profilesAvailable={profilesAvailable}
+            filters={discoveryFilters}
+            browseActive={discoveryReady}
             onQuery={setDiscoveryQuery}
+            onFilters={setDiscoveryFilters}
             onFilm={openDiscoveredFilm}
             onProfile={openPublicProfile}
           />
