@@ -1,5 +1,6 @@
 import { beginTmdbRequest, tmdbRequestIdentity } from "@/lib/tmdb/limit";
 import { logServerError } from "@/lib/server/log";
+import { TMDB_GENRES } from "@/lib/tmdb/discovery";
 
 const TMDB_ORIGIN = "https://api.themoviedb.org/3";
 const IMAGE_ORIGIN = "https://image.tmdb.org/t/p";
@@ -13,6 +14,8 @@ type TmdbMovie = {
   backdrop_path?: string | null;
   overview?: string;
   adult?: boolean;
+  genre_ids?: number[];
+  popularity?: number;
 };
 
 type TmdbSearchResponse = {
@@ -53,12 +56,43 @@ async function tmdbFetch(url: URL, attempt = 0): Promise<Response> {
 }
 
 export async function GET(request: Request) {
-  const query = new URL(request.url).searchParams.get("q")?.trim() ?? "";
-  if (query.length < 2 || query.length > 120) {
-    return response({ results: [] }, query.length > 120 ? 400 : 200);
+  const requestUrl = new URL(request.url);
+  const query = requestUrl.searchParams.get("q")?.trim() ?? "";
+  const filterType = requestUrl.searchParams.get("type") ?? "";
+  const filterId = requestUrl.searchParams.get("id") ?? "";
+  const browseGenre = requestUrl.searchParams.get("genre") ?? "all";
+  const browseDecade = requestUrl.searchParams.get("decade") ?? "all";
+  const browseSort = requestUrl.searchParams.get("sort") === "newest" ? "newest" : "popularity";
+  const browseGenreId = browseGenre === "all" ? null : Number(browseGenre);
+  const browseDecadeYear = browseDecade === "all" ? null : Number(browseDecade);
+  const validBrowseGenre = browseGenreId === null || TMDB_GENRES.some((genre) => genre.id === browseGenreId);
+  const validBrowseDecade = browseDecadeYear === null || (
+    Number.isInteger(browseDecadeYear) &&
+    browseDecadeYear >= 1900 &&
+    browseDecadeYear <= 2020 &&
+    browseDecadeYear % 10 === 0
+  );
+  const filterParam = {
+    director: "with_crew",
+    cast: "with_cast",
+    genre: "with_genres",
+    keyword: "with_keywords",
+  }[filterType];
+  const filtered = Boolean(filterParam && /^\d{1,12}$/.test(filterId) && Number(filterId) > 0);
+  const browsing = query.length === 0 && !filtered;
+  if (
+    query.length > 120 ||
+    (query.length > 0 && query.length < 2) ||
+    !validBrowseGenre ||
+    !validBrowseDecade
+  ) {
+    return response(
+      { results: [] },
+      query.length > 120 || !validBrowseGenre || !validBrowseDecade ? 400 : 200,
+    );
   }
   const release = beginTmdbRequest(
-    `search:${tmdbRequestIdentity(request)}`,
+    `search:${filterType}:${filterId}:${browseGenre}:${browseDecade}:${tmdbRequestIdentity(request)}`,
     { limit: 30 },
   );
   if (!release) {
@@ -70,8 +104,22 @@ export async function GET(request: Request) {
   }
 
   try {
-    const url = new URL(`${TMDB_ORIGIN}/search/movie`);
-    url.searchParams.set("query", query);
+    const url = new URL(`${TMDB_ORIGIN}/${filtered || browsing ? "discover/movie" : "search/movie"}`);
+    if (filtered && filterParam) {
+      url.searchParams.set(filterParam, filterId);
+      url.searchParams.set("sort_by", "popularity.desc");
+    } else if (browsing) {
+      url.searchParams.set("sort_by", browseSort === "newest" ? "primary_release_date.desc" : "popularity.desc");
+      url.searchParams.set("vote_count.gte", "25");
+      url.searchParams.set("primary_release_date.lte", new Date().toISOString().slice(0, 10));
+      if (browseGenreId !== null) url.searchParams.set("with_genres", String(browseGenreId));
+      if (browseDecadeYear !== null) {
+        url.searchParams.set("primary_release_date.gte", `${browseDecadeYear}-01-01`);
+        url.searchParams.set("primary_release_date.lte", `${browseDecadeYear + 9}-12-31`);
+      }
+    } else {
+      url.searchParams.set("query", query);
+    }
     url.searchParams.set("include_adult", "false");
     url.searchParams.set("language", "en-US");
     url.searchParams.set("page", "1");
@@ -102,7 +150,16 @@ export async function GET(request: Request) {
     const payload = (await upstream.json()) as TmdbSearchResponse;
     const results = (payload.results ?? [])
       .filter((movie) => !movie.adult)
-      .slice(0, 8)
+      .filter((movie) => browseGenreId === null || movie.genre_ids?.includes(browseGenreId))
+      .filter((movie) => {
+        if (browseDecadeYear === null) return true;
+        const year = Number(movie.release_date?.slice(0, 4));
+        return year >= browseDecadeYear && year <= browseDecadeYear + 9;
+      })
+      .sort((left, right) => browseSort === "newest"
+        ? (right.release_date ?? "").localeCompare(left.release_date ?? "")
+        : (right.popularity ?? 0) - (left.popularity ?? 0))
+      .slice(0, 16)
       .map((movie) => ({
         id: movie.id,
         title: movie.title,
@@ -111,7 +168,9 @@ export async function GET(request: Request) {
         releaseDate: movie.release_date,
         runtime: null,
         director: "",
-        genres: [],
+        genres: (movie.genre_ids ?? [])
+          .map((id) => TMDB_GENRES.find((genre) => genre.id === id)?.name)
+          .filter((name) => name !== undefined),
         poster: movie.poster_path
           ? `${IMAGE_ORIGIN}/w500${movie.poster_path}`
           : null,

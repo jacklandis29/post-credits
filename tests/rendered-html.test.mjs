@@ -45,11 +45,36 @@ test("server-renders the finished Post Credits product", async () => {
   );
   assert.match(appSource, /Diary/);
   assert.match(appSource, /onLog=\{openLogger\}/);
-  assert.match(appSource, /\["home", "diary", "canon", "watchlist", "profile"\]/);
+  assert.match(appSource, /\["home", "diary", "canon", "stats", "watchlist", "profile"\]/);
   assert.doesNotMatch(appSource, /className="mobile-log"/);
   assert.match(logFlowSource, /Did not finish/);
   assert.match(logFlowSource, /dnf-action" disabled=\{!isValidLocalDate/);
   assert.doesNotMatch(html, /Your latest watch|There is no feed waiting underneath|class="eyebrow"/i);
+});
+
+test("renders the small film, diary, and profile affordances", async () => {
+  const [film, log, profile, diary, migration] = await Promise.all([
+    readFile(new URL("../app/components/FilmDetail.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/LogFlow.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/ProfileView.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/DiaryView.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/20260717160743_add_social_diary_details.sql", import.meta.url), "utf8"),
+  ]);
+  assert.match(film, /Where to watch/);
+  assert.match(film, /JustWatch via TMDB/);
+  assert.match(film, /affection-toggle/);
+  assert.match(film, /favorite-toggle/);
+  assert.match(film, /onDiscover\(\{ type: "director"/);
+  assert.match(film, /type: "cast"/);
+  assert.match(film, /type: "genre"/);
+  assert.match(film, /type: "keyword"/);
+  assert.match(log, /Contains spoilers/);
+  assert.match(log, /watched-on-a-plane/);
+  assert.match(profile, /My four/);
+  assert.match(diary, /All tags/);
+  assert.match(migration, /create table public\.film_likes/);
+  assert.match(migration, /create table public\.profile_favorites/);
+  assert.match(migration, /insert into storage\.buckets/);
 });
 
 test("production auth is visibly protected and returns to the canonical site", async () => {

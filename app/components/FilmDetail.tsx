@@ -7,10 +7,27 @@ import { cacheMovies, movieById } from "@/lib/seed";
 import { movieSimilarity } from "@/lib/similarity";
 import { getSupabaseBrowserClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { loadCommunityMovieStats, type CommunityMovieStats } from "@/lib/supabase/data";
-import type { AppState, Movie } from "@/lib/types";
+import type { AppState, Movie, Review } from "@/lib/types";
 import { filmStyle, prettyDate, sortDiary, verdictCopy, type CanonRow } from "@/lib/ui";
 import { useEffect, useRef, useState } from "react";
 import { PosterArt, VerdictMark } from "./media";
+import { ReviewText } from "./ReviewText";
+
+type DiscoveryTarget = {
+  type: "director" | "cast" | "genre" | "keyword";
+  id: number;
+  label: string;
+};
+
+function SpoilerNote({ note, spoilers }: { note: string; spoilers: boolean }) {
+  if (!spoilers) return <blockquote>&ldquo;{note}&rdquo;</blockquote>;
+  return (
+    <details className="spoiler-note">
+      <summary>Contains spoilers · reveal note</summary>
+      <blockquote>&ldquo;{note}&rdquo;</blockquote>
+    </details>
+  );
+}
 
 export function FilmDetail({
   movie,
@@ -20,6 +37,13 @@ export function FilmDetail({
   onLog,
   onRerank,
   onWatchlist,
+  onLike,
+  onFavorite,
+  onDiscover,
+  onOpenFilm,
+  onSaveReview,
+  readOnly = false,
+  profileLabel = "Your",
 }: {
   movie: Movie;
   state: AppState;
@@ -28,15 +52,28 @@ export function FilmDetail({
   onLog: () => void;
   onRerank: () => void;
   onWatchlist: () => void;
+  onLike: () => void;
+  onFavorite: () => void;
+  onDiscover: (target: DiscoveryTarget) => void;
+  onOpenFilm: (movie: Movie) => void;
+  onSaveReview?: (movie: Movie, body: string, visibility: Review["visibility"]) => void;
+  readOnly?: boolean;
+  profileLabel?: string;
 }) {
   const filmSheetRef = useRef<HTMLDivElement>(null);
   const [film, setFilm] = useState(movie);
   const [community, setCommunity] = useState<CommunityMovieStats | null>(null);
   const [communityLoaded, setCommunityLoaded] = useState(false);
+  const review = state.reviews.find((item) => item.movieId === movie.id);
+  const [reviewEditing, setReviewEditing] = useState(false);
+  const [reviewBody, setReviewBody] = useState(review?.body ?? "");
+  const [reviewVisibility, setReviewVisibility] = useState<Review["visibility"]>(review?.visibility ?? "private");
   const row = canon.find((item) => item.movie.id === movie.id);
   const history = sortDiary(state.diary.filter((entry) => entry.movieId === movie.id));
   const latest = history[0];
   const onWatchlistNow = state.watchlist.some((item) => item.movieId === movie.id);
+  const isLiked = (state.likedMovieIds ?? []).includes(movie.id);
+  const isFavorite = (state.favorites ?? []).some((item) => item.movieId === movie.id);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -46,9 +83,13 @@ export function FilmDetail({
   }, []);
 
   useEffect(() => {
-    if (movie.tagline !== undefined && movie.credits !== undefined) return;
+    if (
+      movie.tagline !== undefined &&
+      movie.watchProviders !== undefined &&
+      movie.credits?.every((person) => person.id)
+    ) return;
     const controller = new AbortController();
-    void fetch(`/api/tmdb/movie/${movie.id}?v=2`, { signal: controller.signal })
+    void fetch(`/api/tmdb/movie/${movie.id}?v=3`, { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) return null;
         const payload = (await response.json()) as { movie?: Movie };
@@ -97,6 +138,8 @@ export function FilmDetail({
             : "First watch",
       detail: null as string | null,
       note: entry.note || null,
+      spoilers: Boolean(entry.containsSpoilers),
+      tags: entry.tags ?? [],
     })),
     ...rankEvents.map((event) => ({
       key: event.id,
@@ -115,6 +158,8 @@ export function FilmDetail({
             ? "Re-ranked by hand"
             : null,
       note: null as string | null,
+      spoilers: false,
+      tags: [] as string[],
     })),
   ].sort((left, right) => right.sortStamp.localeCompare(left.sortStamp)).slice(0, 10);
 
@@ -180,12 +225,14 @@ export function FilmDetail({
           <PosterArt movie={film} eager />
           <div>
             <h1>{film.title}</h1>
-            <p>{film.year} · {film.director}</p>
+            <p>{film.year} · {film.directors?.length ? film.directors.map((person, index) => <span key={person.id}>{index ? " & " : ""}<button className="inline-discovery" onClick={() => onDiscover({ type: "director", id: person.id, label: person.name })}>{person.name}</button></span>) : film.director}</p>
             {film.tagline ? <blockquote className="film-tagline">{film.tagline}</blockquote> : null}
-            <div className="film-actions">
+            {!readOnly ? <div className="film-actions">
               <button className="primary-action" onClick={onLog}>{row ? "Log a rewatch" : "Log this film"}</button>
               {!row ? <button className={`secondary-action watchlist-toggle${onWatchlistNow ? " active" : ""}`} onClick={onWatchlist}><span className="watchlist-toggle-icon" aria-hidden="true">{onWatchlistNow ? "✓" : "+"}</span><span>{onWatchlistNow ? "On Watchlist" : "Add to Watchlist"}</span></button> : null}
-            </div>
+              <button className={`secondary-action affection-toggle${isLiked ? " active" : ""}`} onClick={onLike} aria-pressed={isLiked}><span aria-hidden="true">{isLiked ? "♥" : "♡"}</span><span>{isLiked ? "Liked" : "Like"}</span></button>
+              <button className={`secondary-action favorite-toggle${isFavorite ? " active" : ""}`} onClick={onFavorite} aria-pressed={isFavorite}><span aria-hidden="true">{isFavorite ? "★" : "☆"}</span><span>{isFavorite ? "Favorite" : "Add favorite"}</span></button>
+            </div> : null}
           </div>
         </div>
         <section className="film-link-bar" aria-label="Film links">
@@ -193,11 +240,54 @@ export function FilmDetail({
           {film.imdbId ? <a href={`https://www.imdb.com/title/${film.imdbId}/`} target="_blank" rel="noreferrer">IMDb <span aria-hidden="true">↗</span></a> : null}
           <a href={`https://www.themoviedb.org/movie/${film.id}`} target="_blank" rel="noreferrer">TMDB <span aria-hidden="true">↗</span></a>
         </section>
+        <section className="where-to-watch" aria-labelledby="where-to-watch-title">
+          <div className="where-to-watch-heading">
+            <div><span>Availability in the US</span><h2 id="where-to-watch-title">Where to watch</h2></div>
+            {film.watchProviders?.link ? <a href={film.watchProviders.link} target="_blank" rel="noreferrer">See all options <span aria-hidden="true">↗</span></a> : null}
+          </div>
+          {film.watchProviders && (film.watchProviders.stream.length || film.watchProviders.rent.length || film.watchProviders.buy.length) ? (
+            <div className="provider-groups">
+              {(["stream", "rent", "buy"] as const).map((kind) => film.watchProviders![kind].length ? (
+                <div key={kind}><strong>{kind === "stream" ? "Stream" : kind === "rent" ? "Rent" : "Buy"}</strong><div>{film.watchProviders![kind].map((provider) => <span className="provider-chip" key={`${kind}-${provider.id}`}>{provider.logo ? <img src={provider.logo} alt="" loading="lazy" /> : null}{provider.name}</span>)}</div></div>
+              ) : null)}
+            </div>
+          ) : (
+            <p className="insight-empty">No US streaming, rental, or purchase options are listed right now.</p>
+          )}
+          <small>Availability data from JustWatch via TMDB.</small>
+        </section>
+        <section className="film-review-section">
+          <div className="film-review-heading">
+            <div><span>{readOnly ? `${profileLabel}'s review` : "Your review"}</span><h2>{review ? "What this film left behind" : "Write beyond the watch"}</h2></div>
+            {!readOnly && !reviewEditing ? <button className="text-action" onClick={() => setReviewEditing(true)}>{review ? "Edit review" : "Write a review"}</button> : null}
+          </div>
+          {reviewEditing && !readOnly ? (
+            <div className="review-editor">
+              <textarea autoFocus value={reviewBody} maxLength={50000} onChange={(event) => setReviewBody(event.target.value)} placeholder="Say as much as you need. This review lives with the film, not a specific watch." />
+              <div className="review-editor-meta">
+                <small>Formatting: *italics*, **bold**, &gt; quotes, # headings, and - lists</small>
+                <label>Visibility <select value={reviewVisibility} onChange={(event) => setReviewVisibility(event.target.value as Review["visibility"])}><option value="private">Only me</option><option value="public">Public</option></select></label>
+              </div>
+              <div className="review-editor-actions">
+                <button className="primary-action" disabled={!reviewBody.trim() && !review} onClick={() => { onSaveReview?.(film, reviewBody, reviewVisibility); setReviewEditing(false); }}>Save review</button>
+                {review ? <button className="text-action danger" onClick={() => { setReviewBody(""); onSaveReview?.(film, "", reviewVisibility); setReviewEditing(false); }}>Delete</button> : null}
+                <button className="text-action" onClick={() => { setReviewBody(review?.body ?? ""); setReviewVisibility(review?.visibility ?? "private"); setReviewEditing(false); }}>Cancel</button>
+              </div>
+            </div>
+          ) : review ? (
+            <article className="film-review-copy">
+              <ReviewText body={review.body} />
+              <footer>{review.visibility === "private" && !readOnly ? "Only you can see this" : "Public review"} · Updated {prettyDate(review.updatedAt.slice(0, 10))}</footer>
+            </article>
+          ) : (
+            <p className="insight-empty">{readOnly ? `${profileLabel} has not published a review of this film.` : "Reviews are revisitable and do not require a dated diary entry."}</p>
+          )}
+        </section>
         <div className="film-insights">
           <section className="insight-card personal-ranking-card">
             <div className="insight-heading">
-              <div><span>Your canon</span><h2>{row ? "Where it sits" : "Not ranked yet"}</h2></div>
-              {row ? <button className="text-action" onClick={onRerank}>Re-rank</button> : null}
+              <div><span>{readOnly ? `${profileLabel}'s canon` : "Your canon"}</span><h2>{row ? "Where it sits" : "Not ranked yet"}</h2></div>
+              {row && !readOnly ? <button className="text-action" onClick={onRerank}>Re-rank</button> : null}
             </div>
             {row ? (
               <div className="personal-ranking-body">
@@ -208,10 +298,10 @@ export function FilmDetail({
                 </div>
                 <div className="ranking-neighborhood" aria-label="Nearby films in your ranking">
                   {rankingNeighbors.map((neighbor) => (
-                    <article className={neighbor.movie.id === movie.id ? "current" : ""} key={neighbor.movie.id}>
+                    <button className={neighbor.movie.id === movie.id ? "current" : ""} key={neighbor.movie.id} onClick={() => onOpenFilm(neighbor.movie)}>
                       <span>#{neighbor.rank}</span><PosterArt movie={neighbor.movie} /><strong>{neighbor.movie.title}</strong>
                       {neighbor.movie.id === movie.id ? <small>This film</small> : null}
-                    </article>
+                    </button>
                   ))}
                 </div>
                 <div className="personal-ranking-meta">
@@ -219,7 +309,7 @@ export function FilmDetail({
                   <div><span>Score</span><strong>{row.score === null ? "—" : formatScore(row.score)}</strong></div>
                   {latest ? <div><span>Last watched</span><strong>{prettyDate(latest.watchedOn, { month: "short", day: "numeric", year: "numeric" })}</strong></div> : null}
                 </div>
-                {latest?.note ? <blockquote>&ldquo;{latest.note}&rdquo;</blockquote> : null}
+                {latest?.note ? <SpoilerNote note={latest.note} spoilers={Boolean(latest.containsSpoilers)} /> : null}
               </div>
             ) : (
               <p className="insight-empty">Log this film and compare it with your canon to give it a position.</p>
@@ -252,7 +342,7 @@ export function FilmDetail({
           <div className="film-record">
             {personalTimeline.length ? (
               <section className="film-record-panel">
-                <h2 className="section-label">Your history</h2>
+                <h2 className="section-label">{readOnly ? `${profileLabel}'s history` : "Your history"}</h2>
                 <div className="film-timeline">
                   {personalTimeline.map((event) => (
                     <article key={event.key}>
@@ -260,7 +350,8 @@ export function FilmDetail({
                       <div>
                         <strong>{event.title}</strong>
                         {event.detail ? <small>{event.detail}</small> : null}
-                        {event.note ? <blockquote>&ldquo;{event.note}&rdquo;</blockquote> : null}
+                        {event.note ? <SpoilerNote note={event.note} spoilers={event.spoilers} /> : null}
+                        {event.tags.length ? <div className="entry-tags">{event.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div> : null}
                       </div>
                     </article>
                   ))}
@@ -275,14 +366,14 @@ export function FilmDetail({
                 </div>
                 <div className="head-to-head-list">
                   {headToHead.map((duel) => (
-                    <div className={duel.won ? "won" : "lost"} key={duel.key}>
+                    <button className={duel.won ? "won" : "lost"} key={duel.key} onClick={() => onOpenFilm(duel.opponent)}>
                       <span className="duel-result">{duel.won ? "W" : "L"}</span>
                       <PosterArt movie={duel.opponent} />
                       <span className="duel-copy">
                         <strong>{duel.won ? "Beat" : "Lost to"} {duel.opponent.title}</strong>
                         <small>{prettyDate(duel.date.slice(0, 10), { month: "short", day: "numeric", year: "numeric" })}</small>
                       </span>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </section>
@@ -295,7 +386,7 @@ export function FilmDetail({
             <h2 className="section-label">Cast</h2>
             <div className="cast-strip">
               {film.credits.map((person) => (
-                <figure key={person.name}>
+                <button className="cast-person" key={person.id ?? person.name} disabled={!person.id} onClick={() => person.id ? onDiscover({ type: "cast", id: person.id, label: person.name }) : undefined}>
                   <span className="cast-photo">
                     {person.profile ? (
                       <img src={person.profile} alt={person.name} loading="lazy" />
@@ -303,11 +394,11 @@ export function FilmDetail({
                       <span aria-hidden="true">{person.name.slice(0, 1)}</span>
                     )}
                   </span>
-                  <figcaption>
+                  <span className="cast-caption">
                     <strong>{person.name}</strong>
                     {person.character ? <small>{person.character}</small> : null}
-                  </figcaption>
-                </figure>
+                  </span>
+                </button>
               ))}
             </div>
           </section>
@@ -319,17 +410,17 @@ export function FilmDetail({
             <p>{film.overview}</p>
             {film.keywords?.length ? (
               <div className="film-keywords" aria-label="Themes">
-                {film.keywords.slice(0, 10).map((keyword) => (
-                  <span key={keyword}>{keyword}</span>
-                ))}
+                {(film.keywordDetails?.length ? film.keywordDetails : film.keywords.map((name) => ({ id: 0, name }))).slice(0, 10).map((keyword) => keyword.id ? (
+                  <button key={keyword.id} onClick={() => onDiscover({ type: "keyword", id: keyword.id, label: keyword.name })}>{keyword.name}</button>
+                ) : <span key={keyword.name}>{keyword.name}</span>)}
               </div>
             ) : null}
           </div>
           <dl>
-            <div><dt>Director</dt><dd>{film.director}</dd></div>
+            <div><dt>Director</dt><dd>{film.directors?.length ? film.directors.map((person, index) => <span key={person.id}>{index ? " & " : ""}<button className="inline-discovery" onClick={() => onDiscover({ type: "director", id: person.id, label: person.name })}>{person.name}</button></span>) : film.director}</dd></div>
             {film.releaseDate ? <div><dt>Released</dt><dd>{prettyDate(film.releaseDate, { month: "long", day: "numeric", year: "numeric" })}</dd></div> : null}
             <div><dt>Runtime</dt><dd>{film.runtime ? `${film.runtime} minutes` : "Unknown"}</dd></div>
-            <div><dt>Genres</dt><dd>{film.genres.join(", ") || "Unknown"}</dd></div>
+            <div><dt>Genres</dt><dd className="metadata-links">{film.genreDetails?.length ? film.genreDetails.map((genre) => <button key={genre.id} onClick={() => onDiscover({ type: "genre", id: genre.id, label: genre.name })}>{genre.name}</button>) : film.genres.join(", ") || "Unknown"}</dd></div>
             {film.productionCountries?.length ? <div><dt>Country</dt><dd>{film.productionCountries.join(", ")}</dd></div> : null}
             {film.originalLanguage ? <div><dt>Language</dt><dd>{film.originalLanguage.toUpperCase()}</dd></div> : null}
           </dl>

@@ -20,8 +20,9 @@ type MovieDetail = {
   production_countries?: Array<{ iso_3166_1?: string; name?: string }>;
   genres?: Array<{ id: number; name: string }>;
   credits?: {
-    crew?: Array<{ job?: string; name?: string }>;
+    crew?: Array<{ id?: number; job?: string; name?: string }>;
     cast?: Array<{
+      id?: number;
       name?: string;
       character?: string;
       order?: number;
@@ -29,6 +30,16 @@ type MovieDetail = {
     }>;
   };
   keywords?: { keywords?: Array<{ id?: number; name?: string }> };
+  "watch/providers"?: {
+    results?: Record<string, {
+      link?: string;
+      flatrate?: Array<{ provider_id?: number; provider_name?: string; logo_path?: string | null }>;
+      free?: Array<{ provider_id?: number; provider_name?: string; logo_path?: string | null }>;
+      ads?: Array<{ provider_id?: number; provider_name?: string; logo_path?: string | null }>;
+      rent?: Array<{ provider_id?: number; provider_name?: string; logo_path?: string | null }>;
+      buy?: Array<{ provider_id?: number; provider_name?: string; logo_path?: string | null }>;
+    }>;
+  };
   videos?: {
     results?: Array<{
       key?: string;
@@ -37,6 +48,12 @@ type MovieDetail = {
       official?: boolean;
     }>;
   };
+};
+
+type WatchProvider = {
+  provider_id?: number;
+  provider_name?: string;
+  logo_path?: string | null;
 };
 
 function json(body: unknown, status = 200, headers?: HeadersInit) {
@@ -92,7 +109,7 @@ export async function GET(
   try {
     const url = new URL(`${TMDB_ORIGIN}/movie/${id}`);
     url.searchParams.set("language", "en-US");
-    url.searchParams.set("append_to_response", "credits,keywords,videos");
+    url.searchParams.set("append_to_response", "credits,keywords,videos,watch/providers");
     const upstream = await fetchDetail(url);
     if (upstream.status === 503) {
       return json({ error: "TMDB details are not configured" }, 503);
@@ -105,7 +122,17 @@ export async function GET(
     if (detail.adult) return json({ error: "Film not available in v1" }, 404);
     const directors = (detail.credits?.crew ?? [])
       .filter((person) => person.job === "Director" && person.name)
-      .map((person) => person.name!);
+      .map((person) => ({ id: person.id ?? 0, name: person.name! }));
+    const usProviders = detail["watch/providers"]?.results?.US;
+    const providers = (items: WatchProvider[] = []) => items.flatMap((provider) =>
+        provider.provider_id && provider.provider_name
+          ? [{
+              id: provider.provider_id,
+              name: provider.provider_name,
+              logo: provider.logo_path ? `${IMAGE_ORIGIN}/w92${provider.logo_path}` : null,
+            }]
+          : [],
+      );
     const trailer = (detail.videos?.results ?? []).find(
       (video) => video.site === "YouTube" && video.type === "Trailer" && video.official && video.key,
     ) ?? (detail.videos?.results ?? []).find(
@@ -118,18 +145,21 @@ export async function GET(
       year: Number(detail.release_date?.slice(0, 4)) || new Date().getFullYear(),
       releaseDate: detail.release_date,
       runtime: detail.runtime ?? null,
-      director: directors.join(" & ") || "Unknown director",
+      director: directors.map((person) => person.name).join(" & ") || "Unknown director",
+      directors: directors.filter((person) => person.id > 0),
       genres: (detail.genres ?? []).map((genre) => genre.name),
+      genreDetails: detail.genres ?? [],
       cast: (detail.credits?.cast ?? [])
         .filter((person) => person.name)
         .sort((left, right) => (left.order ?? 999) - (right.order ?? 999))
         .slice(0, 12)
         .map((person) => person.name!),
       credits: (detail.credits?.cast ?? [])
-        .filter((person) => person.name)
+        .filter((person) => person.id && person.name)
         .sort((left, right) => (left.order ?? 999) - (right.order ?? 999))
         .slice(0, 14)
         .map((person) => ({
+          id: person.id!,
           name: person.name!,
           character: person.character?.trim() || null,
           profile: person.profile_path
@@ -139,6 +169,20 @@ export async function GET(
       keywords: (detail.keywords?.keywords ?? [])
         .flatMap((keyword) => keyword.name ? [keyword.name] : [])
         .slice(0, 40),
+      keywordDetails: (detail.keywords?.keywords ?? [])
+        .flatMap((keyword) => keyword.id && keyword.name ? [{ id: keyword.id, name: keyword.name }] : [])
+        .slice(0, 40),
+      watchProviders: usProviders?.link ? {
+        region: "US",
+        link: usProviders.link,
+        stream: providers([
+          ...(usProviders.flatrate ?? []),
+          ...(usProviders.free ?? []),
+          ...(usProviders.ads ?? []),
+        ]),
+        rent: providers(usProviders.rent ?? []),
+        buy: providers(usProviders.buy ?? []),
+      } : null,
       originalLanguage: detail.original_language ?? null,
       productionCountries: (detail.production_countries ?? [])
         .flatMap((country) => country.name ? [country.name] : []),

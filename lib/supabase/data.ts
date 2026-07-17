@@ -11,9 +11,11 @@ import type {
   AppState,
   ComparisonRecord,
   DiaryEntry,
+  FavoriteFilm,
   Movie,
   RankedFilm,
   RankHistoryRecord,
+  Review,
   Verdict,
   WatchlistItem,
 } from "@/lib/types";
@@ -24,6 +26,7 @@ export type UserProfile = {
   id: string;
   username: string;
   displayName: string;
+  avatarUrl: string | null;
   timezone: string;
   isPublic: boolean;
   isDiscoverable: boolean;
@@ -79,6 +82,17 @@ function stringList(value: unknown): string[] {
   });
 }
 
+function namedItems(value: unknown): Array<{ id: number; name: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as DbRow;
+    const id = number(row.id ?? row.tmdb_id);
+    const name = text(row.name);
+    return id > 0 && name ? [{ id, name }] : [];
+  });
+}
+
 function director(value: unknown): string {
   const names = stringList(value);
   if (names.length) return names.join(" & ");
@@ -101,9 +115,23 @@ function mapMovie(row: DbRow, palette?: DbRow): Movie {
     releaseDate: releaseDate || undefined,
     runtime: row.runtime_minutes == null ? null : number(row.runtime_minutes),
     director: director(row.director),
+    directors: namedItems(row.director),
     genres: stringList(row.genres),
+    genreDetails: namedItems(row.genres),
     cast: stringList(row.principal_cast),
+    credits: Array.isArray(row.principal_cast)
+      ? row.principal_cast.flatMap((item) => {
+          if (!item || typeof item !== "object") return [];
+          const cast = item as DbRow;
+          const id = number(cast.id ?? cast.tmdb_id);
+          const name = text(cast.name);
+          return id > 0 && name
+            ? [{ id, name, character: text(cast.character) || null, profile: null }]
+            : [];
+        })
+      : undefined,
     keywords: stringList(row.keywords),
+    keywordDetails: namedItems(row.keywords),
     originalLanguage: text(row.original_language) || null,
     productionCountries: stringList(row.production_countries),
     poster: posterPath ? `${IMAGE_ORIGIN}/w500${posterPath}` : null,
@@ -123,7 +151,7 @@ export async function loadProfile(
 ): Promise<UserProfile | null> {
   const { data, error } = await client
     .from("profiles")
-    .select("id, username, display_name, timezone, is_public, is_discoverable, default_note_visibility, bio, public_access_approved")
+    .select("id, username, display_name, avatar_url, timezone, is_public, is_discoverable, default_note_visibility, bio, public_access_approved")
     .eq("id", userId)
     .maybeSingle();
   if (error) throw error;
@@ -133,6 +161,7 @@ export async function loadProfile(
     id: text(row.id),
     username: text(row.username),
     displayName: text(row.display_name),
+    avatarUrl: text(row.avatar_url) || null,
     timezone: text(row.timezone, "UTC"),
     isPublic: Boolean(row.is_public),
     isDiscoverable: Boolean(row.is_discoverable),
@@ -171,6 +200,7 @@ export async function updateProfile(
     isPublic: boolean;
     isDiscoverable: boolean;
     defaultNoteVisibility: "private" | "public";
+    avatarUrl: string | null;
   },
 ): Promise<UserProfile> {
   const { data, error } = await client
@@ -181,9 +211,10 @@ export async function updateProfile(
       is_public: input.isPublic,
       is_discoverable: input.isPublic && input.isDiscoverable,
       default_note_visibility: input.defaultNoteVisibility,
+      avatar_url: input.avatarUrl,
     })
     .eq("id", input.userId)
-    .select("id, username, display_name, timezone, is_public, is_discoverable, default_note_visibility, bio, public_access_approved")
+    .select("id, username, display_name, avatar_url, timezone, is_public, is_discoverable, default_note_visibility, bio, public_access_approved")
     .single();
   if (error) throw error;
   const row = data as DbRow;
@@ -191,6 +222,7 @@ export async function updateProfile(
     id: text(row.id),
     username: text(row.username),
     displayName: text(row.display_name),
+    avatarUrl: text(row.avatar_url) || null,
     timezone: text(row.timezone, "UTC"),
     isPublic: Boolean(row.is_public),
     isDiscoverable: Boolean(row.is_discoverable),
@@ -258,21 +290,29 @@ export async function loadPublicProfileState(
   client: SupabaseClient,
   profileId: string,
 ): Promise<PublicProfileState> {
-  const [profileResult, diaryResult, canonResult] = await Promise.all([
+  const [profileResult, diaryResult, canonResult, favoritesResult, reviewsResult] = await Promise.all([
     client.from("public_profiles").select("id, username, display_name, avatar_url, bio").eq("id", profileId).single(),
     client.from("public_diary_entries").select("*").eq("user_id", profileId).order("watched_on", { ascending: false }),
     client.from("public_canon").select("*").eq("user_id", profileId).order("canon_rank", { ascending: true }),
+    client.from("public_profile_favorites").select("*").eq("user_id", profileId).order("position", { ascending: true }),
+    client.from("public_reviews").select("*").eq("user_id", profileId).order("updated_at", { ascending: false }),
   ]);
   if (profileResult.error) throw profileResult.error;
   if (diaryResult.error) throw diaryResult.error;
   if (canonResult.error) throw canonResult.error;
+  if (favoritesResult.error) throw favoritesResult.error;
+  if (reviewsResult.error) throw reviewsResult.error;
 
   const profileRow = profileResult.data as DbRow;
   const diaryRows = asRows(diaryResult.data);
   const canonRows = asRows(canonResult.data);
+  const favoriteRows = asRows(favoritesResult.data);
+  const reviewRows = asRows(reviewsResult.data);
   const movieIds = [...new Set([
     ...diaryRows.map((row) => number(row.tmdb_id)),
     ...canonRows.map((row) => number(row.tmdb_id)),
+    ...favoriteRows.map((row) => number(row.tmdb_id)),
+    ...reviewRows.map((row) => number(row.tmdb_id)),
   ])].filter((id) => id > 0);
   let movieRows: DbRow[] = [];
   let paletteRows: DbRow[] = [];
@@ -306,11 +346,21 @@ export async function loadPublicProfileState(
         movieId: number(row.tmdb_id),
         watchedOn: text(row.watched_on),
         note: text(row.note),
+        containsSpoilers: Boolean(row.contains_spoilers),
+        tags: stringList(row.tags),
         visibility: "public" as const,
         completionStatus: text(row.completion_status, "completed") as DiaryEntry["completionStatus"],
         rankingStatus: text(row.ranking_status, "complete") as DiaryEntry["rankingStatus"],
         isRewatch: Boolean(row.is_rewatch),
         createdAt: text(row.created_at),
+      })),
+      reviews: reviewRows.map((row) => ({
+        id: text(row.id),
+        movieId: number(row.tmdb_id),
+        body: text(row.body),
+        visibility: "public" as const,
+        createdAt: text(row.created_at),
+        updatedAt: text(row.updated_at),
       })),
       ranked: canonRows.map((row) => ({
         movieId: number(row.tmdb_id),
@@ -322,6 +372,12 @@ export async function loadPublicProfileState(
         lastRankedAt: text(row.last_ranked_at),
       })),
       watchlist: [],
+      likedMovieIds: [],
+      favorites: favoriteRows.map((row) => ({
+        movieId: number(row.tmdb_id),
+        position: number(row.position),
+        addedAt: text(row.created_at),
+      })),
       movieCache,
       comparisons: [],
       rankHistory: [],
@@ -349,8 +405,17 @@ export async function loadUserState(
   client: SupabaseClient,
   userId: string,
 ): Promise<AppState> {
-  const { data, error } = await client.rpc("get_after_credits_state");
-  if (error) throw error;
+  const [snapshotResult, likesResult, favoritesResult, reviewsResult] = await Promise.all([
+    client.rpc("get_after_credits_state"),
+    client.from("film_likes").select("user_id, tmdb_id").eq("user_id", userId),
+    client.from("profile_favorites").select("user_id, tmdb_id, position, created_at").eq("user_id", userId).order("position", { ascending: true }),
+    client.from("reviews").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
+  ]);
+  if (snapshotResult.error) throw snapshotResult.error;
+  if (likesResult.error) throw likesResult.error;
+  if (favoritesResult.error) throw favoritesResult.error;
+  if (reviewsResult.error) throw reviewsResult.error;
+  const data = snapshotResult.data;
   const snapshot = (
     Array.isArray(data) ? data[0] : data
   ) as DbRow | null;
@@ -367,8 +432,11 @@ export async function loadUserState(
   const activeAnswers = asRows(snapshot.ranking_session_answers);
   const movieRows = asRows(snapshot.movies);
   const paletteRows = asRows(snapshot.movie_palettes);
+  const likeRows = asRows(likesResult.data);
+  const favoriteRows = asRows(favoritesResult.data);
+  const reviewRows = asRows(reviewsResult.data);
   if (
-    [watches, watchlistRows, canonRows, historyRows, comparisonRows]
+    [watches, watchlistRows, canonRows, historyRows, comparisonRows, likeRows, favoriteRows, reviewRows]
       .flat()
       .some((row) => text(row.user_id) !== userId) ||
     (activeDbSession && text(activeDbSession.user_id) !== userId)
@@ -376,10 +444,28 @@ export async function loadUserState(
     throw new Error("Supabase returned another user's data.");
   }
 
-  const cachedMovies = movieRows.map((row) =>
+  const extraMovieIds = [...new Set([
+    ...likeRows.map((row) => number(row.tmdb_id)),
+    ...favoriteRows.map((row) => number(row.tmdb_id)),
+    ...reviewRows.map((row) => number(row.tmdb_id)),
+  ])].filter((id) => id > 0 && !movieRows.some((row) => number(row.tmdb_id) === id));
+  let allMovieRows = movieRows;
+  let allPaletteRows = paletteRows;
+  if (extraMovieIds.length) {
+    const [extraMovies, extraPalettes] = await Promise.all([
+      client.from("movies").select("*").in("tmdb_id", extraMovieIds),
+      client.from("movie_palettes").select("*").in("tmdb_id", extraMovieIds),
+    ]);
+    if (extraMovies.error) throw extraMovies.error;
+    if (extraPalettes.error) throw extraPalettes.error;
+    allMovieRows = [...movieRows, ...asRows(extraMovies.data)];
+    allPaletteRows = [...paletteRows, ...asRows(extraPalettes.data)];
+  }
+
+  const cachedMovies = allMovieRows.map((row) =>
     mapMovie(
       row,
-      paletteRows.find((palette) => number(palette.tmdb_id) === number(row.tmdb_id)),
+      allPaletteRows.find((palette) => number(palette.tmdb_id) === number(row.tmdb_id)),
     ),
   );
   cacheMovies(cachedMovies);
@@ -389,11 +475,21 @@ export async function loadUserState(
     movieId: number(row.tmdb_id),
     watchedOn: text(row.watched_on),
     note: text(row.note),
+    containsSpoilers: Boolean(row.contains_spoilers),
+    tags: stringList(row.tags),
     visibility: text(row.visibility, "inherit") as DiaryEntry["visibility"],
     completionStatus: text(row.completion_status, "completed") as DiaryEntry["completionStatus"],
     rankingStatus: text(row.ranking_status, "pending") as DiaryEntry["rankingStatus"],
     isRewatch: Boolean(row.is_rewatch),
     createdAt: text(row.created_at),
+  }));
+  const reviews: Review[] = reviewRows.map((row) => ({
+    id: text(row.id),
+    movieId: number(row.tmdb_id),
+    body: text(row.body),
+    visibility: text(row.visibility) === "public" ? "public" : "private",
+    createdAt: text(row.created_at),
+    updatedAt: text(row.updated_at),
   }));
   const ranked: RankedFilm[] = canonRows.map((row) => ({
     movieId: number(row.tmdb_id),
@@ -503,8 +599,15 @@ export async function loadUserState(
 
   return {
     diary,
+    reviews,
     ranked,
     watchlist,
+    likedMovieIds: likeRows.map((row) => number(row.tmdb_id)),
+    favorites: favoriteRows.map((row): FavoriteFilm => ({
+      movieId: number(row.tmdb_id),
+      position: number(row.position),
+      addedAt: text(row.created_at),
+    })),
     movieCache: cachedMovies,
     comparisons,
     rankHistory,
@@ -576,6 +679,8 @@ export async function insertWatchEntry(
     watchedOn: string;
     note: string;
     visibility: DiaryEntry["visibility"];
+    containsSpoilers: boolean;
+    tags: string[];
     dnf: boolean;
     importKey?: string;
   },
@@ -588,6 +693,8 @@ export async function insertWatchEntry(
     completion_status: input.dnf ? "dnf" : "completed",
     note: input.note.trim() || null,
     visibility: input.visibility,
+    contains_spoilers: input.containsSpoilers,
+    tags: input.tags,
     ...(input.importKey ? { client_import_id: input.importKey } : {}),
   };
   let { data, error } = await client
@@ -612,11 +719,170 @@ export async function insertWatchEntry(
     movieId: number(row.tmdb_id),
     watchedOn: text(row.watched_on),
     note: text(row.note),
+    containsSpoilers: Boolean(row.contains_spoilers),
+    tags: stringList(row.tags),
     visibility: text(row.visibility, "inherit") as DiaryEntry["visibility"],
     completionStatus: text(row.completion_status) as DiaryEntry["completionStatus"],
     rankingStatus: text(row.ranking_status) as DiaryEntry["rankingStatus"],
     isRewatch: Boolean(row.is_rewatch),
     createdAt: text(row.created_at),
+  };
+}
+
+export async function setFilmLike(
+  client: SupabaseClient,
+  input: { userId: string; movie: Movie; shouldLike: boolean },
+): Promise<void> {
+  if (input.shouldLike) {
+    await cacheMovieRecord(client, input.movie);
+    const { error } = await client.from("film_likes").insert({
+      user_id: input.userId,
+      tmdb_id: input.movie.id,
+    });
+    if (error && error.code !== "23505") throw error;
+    return;
+  }
+  const { error } = await client
+    .from("film_likes")
+    .delete()
+    .eq("user_id", input.userId)
+    .eq("tmdb_id", input.movie.id);
+  if (error) throw error;
+}
+
+export async function setFavoriteFilm(
+  client: SupabaseClient,
+  input: { userId: string; movie: Movie; position: number | null },
+): Promise<void> {
+  if (input.position !== null) {
+    await cacheMovieRecord(client, input.movie);
+    const { error } = await client.from("profile_favorites").insert({
+      user_id: input.userId,
+      tmdb_id: input.movie.id,
+      position: input.position,
+    });
+    if (error && error.code !== "23505") throw error;
+    return;
+  }
+  const { error } = await client
+    .from("profile_favorites")
+    .delete()
+    .eq("user_id", input.userId)
+    .eq("tmdb_id", input.movie.id);
+  if (error) throw error;
+}
+
+export async function uploadProfileAvatar(
+  client: SupabaseClient,
+  userId: string,
+  file: File,
+): Promise<string> {
+  const extensions: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+  };
+  const extension = extensions[file.type];
+  if (!extension) throw new Error("Choose a JPG, PNG, or WebP image.");
+  if (file.size > 5 * 1024 * 1024) throw new Error("Avatar images must be 5 MB or smaller.");
+  const path = `${userId}/avatar-${crypto.randomUUID()}.${extension}`;
+  const { error } = await client.storage.from("avatars").upload(path, file, {
+    contentType: file.type,
+    cacheControl: "3600",
+    upsert: false,
+  });
+  if (error) throw error;
+  return client.storage.from("avatars").getPublicUrl(path).data.publicUrl;
+}
+
+export async function updateWatchEntry(
+  client: SupabaseClient,
+  input: {
+    entryId: string;
+    watchedOn: string;
+    note: string;
+    visibility: DiaryEntry["visibility"];
+    containsSpoilers: boolean;
+    tags: string[];
+  },
+): Promise<DiaryEntry> {
+  const { data, error } = await client
+    .rpc("update_watch_entry", {
+      p_watch_entry_id: input.entryId,
+      p_watched_on: input.watchedOn,
+      p_note: input.note.trim() || null,
+      p_visibility: input.visibility,
+      p_contains_spoilers: input.containsSpoilers,
+      p_tags: input.tags,
+    })
+    .single();
+  if (error) throw error;
+  const row = data as DbRow;
+  return {
+    id: text(row.id),
+    movieId: number(row.tmdb_id),
+    watchedOn: text(row.watched_on),
+    note: text(row.note),
+    containsSpoilers: Boolean(row.contains_spoilers),
+    tags: stringList(row.tags),
+    visibility: text(row.visibility, "inherit") as DiaryEntry["visibility"],
+    completionStatus: text(row.completion_status) as DiaryEntry["completionStatus"],
+    rankingStatus: text(row.ranking_status) as DiaryEntry["rankingStatus"],
+    isRewatch: Boolean(row.is_rewatch),
+    createdAt: text(row.created_at),
+  };
+}
+
+export async function deleteWatchEntry(
+  client: SupabaseClient,
+  input: { entryId: string; removeFromCanon: boolean },
+): Promise<void> {
+  const { error } = await client.rpc("delete_watch_entry", {
+    p_watch_entry_id: input.entryId,
+    p_remove_from_canon: input.removeFromCanon,
+  });
+  if (error) throw error;
+}
+
+export async function saveReviewRecord(
+  client: SupabaseClient,
+  input: {
+    userId: string;
+    movie: Movie;
+    body: string;
+    visibility: Review["visibility"];
+  },
+): Promise<Review | null> {
+  const body = input.body.trim();
+  if (!body) {
+    const { error } = await client
+      .from("reviews")
+      .delete()
+      .eq("user_id", input.userId)
+      .eq("tmdb_id", input.movie.id);
+    if (error) throw error;
+    return null;
+  }
+  await cacheMovieRecord(client, input.movie);
+  const { data, error } = await client
+    .from("reviews")
+    .upsert({
+      user_id: input.userId,
+      tmdb_id: input.movie.id,
+      body,
+      visibility: input.visibility,
+    }, { onConflict: "user_id,tmdb_id" })
+    .select("*")
+    .single();
+  if (error) throw error;
+  const row = data as DbRow;
+  return {
+    id: text(row.id),
+    movieId: number(row.tmdb_id),
+    body: text(row.body),
+    visibility: text(row.visibility) === "public" ? "public" : "private",
+    createdAt: text(row.created_at),
+    updatedAt: text(row.updated_at),
   };
 }
 
